@@ -251,7 +251,14 @@ func (sp *streamPreview) finish(finalText string) bool {
 	}
 
 	if sp.previewMsgID == nil || sp.degraded {
+		// If we have a preview but it's degraded, try to update it with final content
+		// before falling back to sending a new message
 		if sp.previewMsgID != nil && sp.degraded {
+			if updater, ok := sp.platform.(MessageUpdater); ok && finalText != "" {
+				slog.Debug("stream preview finish: updating degraded preview with final text")
+				_ = updater.UpdateMessage(sp.ctx, sp.previewMsgID, finalText)
+				return true
+			}
 			if cleaner, ok := sp.platform.(PreviewCleaner); ok {
 				slog.Debug("stream preview finish: deleting stale preview (degraded)")
 				_ = cleaner.DeletePreviewMessage(sp.ctx, sp.previewMsgID)

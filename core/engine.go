@@ -1891,7 +1891,12 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 					sp.detachPreview() // keep frozen preview visible as permanent message
 				}
 				preview := truncateIf(event.Content, e.display.ThinkingMaxLen)
-				e.send(p, replyCtx, fmt.Sprintf(e.i18n.T(MsgThinking), preview))
+				// Use collapsible message if platform supports it
+				if _, ok := p.(CollapsibleSender); ok {
+					e.sendCollapsible(p, replyCtx, "\U0001f4ad Thinking", preview, true)
+				} else {
+					e.send(p, replyCtx, fmt.Sprintf(e.i18n.T(MsgThinking), preview))
+				}
 			}
 
 		case EventToolUse:
@@ -1914,27 +1919,34 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 				if previewActive {
 					sp.detachPreview() // keep frozen preview visible as permanent message
 				}
-				toolInput := event.ToolInput
-				var formattedInput string
-				if toolInput == "" {
-					formattedInput = ""
-				} else if strings.Contains(toolInput, "```") {
-					// Already contains code blocks (pre-formatted by agent) — use as-is
-					formattedInput = toolInput
-				} else if strings.Contains(toolInput, "\n") || utf8.RuneCountInString(toolInput) > 200 {
-					lang := toolCodeLang(event.ToolName, toolInput)
-					formattedInput = fmt.Sprintf("```%s\n%s\n```", lang, toolInput)
+				// Use collapsible message if platform supports it
+				if _, ok := p.(CollapsibleSender); ok {
+					inputPreview := truncateIf(event.ToolInput, e.display.ToolMaxLen)
+					toolContent := fmt.Sprintf("**Tool:** `%s`\n\n**Input:**\n```\n%s\n```", event.ToolName, inputPreview)
+					e.sendCollapsible(p, replyCtx, fmt.Sprintf("\u2699\ufe0f Execution #%d", toolCount), toolContent, true)
 				} else {
-					switch event.ToolName {
-					case "shell", "run_shell_command", "Bash":
-						formattedInput = fmt.Sprintf("```bash\n%s\n```", toolInput)
-					default:
-						formattedInput = fmt.Sprintf("`%s`", toolInput)
+					toolInput := event.ToolInput
+					var formattedInput string
+					if toolInput == "" {
+						formattedInput = ""
+					} else if strings.Contains(toolInput, "```") {
+						// Already contains code blocks (pre-formatted by agent) — use as-is
+						formattedInput = toolInput
+					} else if strings.Contains(toolInput, "\n") || utf8.RuneCountInString(toolInput) > 200 {
+						lang := toolCodeLang(event.ToolName, toolInput)
+						formattedInput = fmt.Sprintf("```%s\n%s\n```", lang, toolInput)
+					} else {
+						switch event.ToolName {
+						case "shell", "run_shell_command", "Bash":
+							formattedInput = fmt.Sprintf("```bash\n%s\n```", toolInput)
+						default:
+							formattedInput = fmt.Sprintf("`%s`", toolInput)
+						}
 					}
-				}
-				toolMsg := fmt.Sprintf(e.i18n.T(MsgTool), toolCount, event.ToolName, formattedInput)
-				for _, chunk := range SplitMessageCodeFenceAware(toolMsg, maxPlatformMessageLen) {
-					e.send(p, replyCtx, chunk)
+					toolMsg := fmt.Sprintf(e.i18n.T(MsgTool), toolCount, event.ToolName, formattedInput)
+					for _, chunk := range SplitMessageCodeFenceAware(toolMsg, maxPlatformMessageLen) {
+						e.send(p, replyCtx, chunk)
+					}
 				}
 			}
 
@@ -4944,6 +4956,45 @@ func (e *Engine) SendToSessionWithAttachments(sessionKey, message string, images
 	return nil
 }
 
+// SendImageToSession sends an image to an active session from an external caller (API/CLI).
+// If sessionKey is empty, it picks the first active session.
+func (e *Engine) SendImageToSession(sessionKey string, img ImageAttachment) error {
+	e.interactiveMu.Lock()
+
+	var state *interactiveState
+	if sessionKey != "" {
+		state = e.interactiveStates[sessionKey]
+	} else {
+		// Pick the first active session
+		for _, s := range e.interactiveStates {
+			state = s
+			break
+		}
+	}
+	e.interactiveMu.Unlock()
+
+	if state == nil {
+		return fmt.Errorf("no active session found (key=%q)", sessionKey)
+	}
+
+	state.mu.Lock()
+	p := state.platform
+	replyCtx := state.replyCtx
+	state.mu.Unlock()
+
+	if p == nil {
+		return fmt.Errorf("no active session found (key=%q)", sessionKey)
+	}
+
+	// Check if platform supports sending images
+	imgSender, ok := p.(ImageSender)
+	if !ok {
+		return fmt.Errorf("platform %q does not support sending images", p.Name())
+	}
+
+	return imgSender.SendImage(e.ctx, replyCtx, img)
+}
+
 // sendPermissionPrompt sends a permission prompt with interactive buttons when
 // the platform supports them. Fallback chain: InlineButtonSender → CardSender → plain text.
 func (e *Engine) sendPermissionPrompt(p Platform, replyCtx any, prompt, toolName, toolInput string) {
@@ -5102,6 +5153,26 @@ func (e *Engine) send(p Platform, replyCtx any, content string) {
 	start := time.Now()
 	if err := p.Send(e.ctx, replyCtx, content); err != nil {
 		slog.Error("platform send failed", "platform", p.Name(), "error", err, "content_len", len(content))
+	}
+	if elapsed := time.Since(start); elapsed >= slowPlatformSend {
+		slog.Warn("slow platform send", "platform", p.Name(), "elapsed", elapsed, "content_len", len(content))
+	}
+}
+
+// sendCollapsible sends a collapsible message if the platform supports it.
+// Falls back to regular send if not supported.
+func (e *Engine) sendCollapsible(p Platform, replyCtx any, title string, content string, collapsed bool) {
+	start := time.Now()
+	if cs, ok := p.(CollapsibleSender); ok {
+		if err := cs.SendCollapsible(e.ctx, replyCtx, title, content, collapsed); err != nil {
+			slog.Error("platform collapsible send failed", "platform", p.Name(), "error", err, "content_len", len(content))
+		}
+	} else {
+		// Fallback to regular send with title prefix
+		combined := fmt.Sprintf("%s\n%s", title, content)
+		if err := p.Send(e.ctx, replyCtx, combined); err != nil {
+			slog.Error("platform send failed", "platform", p.Name(), "error", err, "content_len", len(content))
+		}
 	}
 	if elapsed := time.Since(start); elapsed >= slowPlatformSend {
 		slog.Warn("slow platform send", "platform", p.Name(), "elapsed", elapsed, "content_len", len(content))

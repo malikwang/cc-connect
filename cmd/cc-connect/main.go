@@ -50,6 +50,9 @@ func main() {
 		case "send":
 			runSend(os.Args[2:])
 			return
+		case "send-image":
+			runSendImage(os.Args[2:])
+			return
 		case "cron":
 			runCron(os.Args[2:])
 			return

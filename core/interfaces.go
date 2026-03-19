@@ -63,6 +63,13 @@ When you generate a local image or file that should be sent to the user, use:
 You may repeat --image / --file multiple times. Use this only for generated attachments that need to be delivered to the user.
 If you include --message, do not repeat the exact same sentence again in your normal reply, because your normal reply is also delivered automatically.
 
+Alternatively, you can use the simpler send-image command:
+
+  cc-connect send-image <image-file-path>
+  cat screenshot.png | cc-connect send-image --stdin
+
+Environment variables CC_PROJECT and CC_SESSION_KEY are already set, so you do NOT need to specify --project or --session-key.
+
 ### Scheduled tasks (cron)
 When the user asks you to do something on a schedule (e.g. "每天早上6点帮我总结GitHub trending"), use the Bash tool to run:
 
@@ -117,6 +124,13 @@ type ImageSender interface {
 // FileSender is an optional interface for platforms that support sending files.
 type FileSender interface {
 	SendFile(ctx context.Context, replyCtx any, file FileAttachment) error
+}
+
+// CollapsibleSender is an optional interface for platforms that support
+// sending collapsible/expandable messages (e.g., for thinking process).
+// The content is shown in a collapsed section by default, user can click to expand.
+type CollapsibleSender interface {
+	SendCollapsible(ctx context.Context, replyCtx any, title string, content string, collapsed bool) error
 }
 
 // MessageUpdater is an optional interface for platforms that support updating messages.

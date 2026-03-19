@@ -592,6 +592,13 @@ func (p *Platform) onMessage(event *larkim.P2MessageReceiveV1) error {
 		"reply_in_thread", p.shouldReplyInThread(rctx),
 	)
 
+	// Fetch quoted (replied-to) message context if present
+	var quotedPrefix string
+	var quotedImages []core.ImageAttachment
+	if msg.ParentId != nil && *msg.ParentId != "" {
+		quotedPrefix, quotedImages = p.fetchQuotedMessage(*msg.ParentId)
+	}
+
 	switch msgType {
 	case "text":
 		var textBody struct {
@@ -602,7 +609,7 @@ func (p *Platform) onMessage(event *larkim.P2MessageReceiveV1) error {
 			return nil
 		}
 		text := stripMentions(textBody.Text, msg.Mentions, p.botOpenID)
-		if text == "" {
+		if text == "" && quotedPrefix == "" {
 			slog.Debug(p.tag()+": dropping empty text after mention stripping",
 				"message_id", messageID,
 				"raw_text_len", len(textBody.Text),
@@ -614,7 +621,8 @@ func (p *Platform) onMessage(event *larkim.P2MessageReceiveV1) error {
 			SessionKey: sessionKey, Platform: p.platformName,
 			MessageID: messageID,
 			UserID:    userID, UserName: userName, ChatName: chatName,
-			Content: text, ReplyCtx: rctx,
+			Content: quotedPrefix + text, Images: quotedImages,
+			ReplyCtx: rctx,
 		})
 
 	case "image":
@@ -630,11 +638,12 @@ func (p *Platform) onMessage(event *larkim.P2MessageReceiveV1) error {
 			slog.Error(p.tag()+": download image failed", "error", err)
 			return nil
 		}
+		images := append(quotedImages, core.ImageAttachment{MimeType: mimeType, Data: imgData})
 		p.handler(p.dispatchPlatform(), &core.Message{
 			SessionKey: sessionKey, Platform: p.platformName,
 			MessageID: messageID,
 			UserID:    userID, UserName: userName, ChatName: chatName,
-			Images:   []core.ImageAttachment{{MimeType: mimeType, Data: imgData}},
+			Content: quotedPrefix, Images: images,
 			ReplyCtx: rctx,
 		})
 
@@ -669,14 +678,29 @@ func (p *Platform) onMessage(event *larkim.P2MessageReceiveV1) error {
 	case "post":
 		textParts, images := p.parsePostContent(messageID, *msg.Content)
 		text := stripMentions(strings.Join(textParts, "\n"), msg.Mentions, p.botOpenID)
-		if text == "" && len(images) == 0 {
+		if text == "" && len(images) == 0 && quotedPrefix == "" {
+			return nil
+		}
+		images = append(quotedImages, images...)
+		p.handler(p.dispatchPlatform(), &core.Message{
+			SessionKey: sessionKey, Platform: p.platformName,
+			MessageID: messageID,
+			UserID:    userID, UserName: userName, ChatName: chatName,
+			Content: quotedPrefix + text, Images: images,
+			ReplyCtx: rctx,
+		})
+
+	case "interactive":
+		slog.Info(p.tag()+": interactive message content", "content", *msg.Content)
+		text := extractCardText(*msg.Content)
+		if text == "" && quotedPrefix == "" {
 			return nil
 		}
 		p.handler(p.dispatchPlatform(), &core.Message{
 			SessionKey: sessionKey, Platform: p.platformName,
 			MessageID: messageID,
 			UserID:    userID, UserName: userName, ChatName: chatName,
-			Content: text, Images: images,
+			Content: quotedPrefix + text, Images: quotedImages,
 			ReplyCtx: rctx,
 		})
 
@@ -701,6 +725,7 @@ func (p *Platform) onMessage(event *larkim.P2MessageReceiveV1) error {
 			SessionKey: sessionKey, Platform: p.platformName,
 			MessageID: messageID,
 			UserID:    userID, UserName: userName, ChatName: chatName,
+			Content: quotedPrefix, Images: quotedImages,
 			Files: []core.FileAttachment{{
 				MimeType: mimeType,
 				Data:     fileData,
@@ -1673,23 +1698,89 @@ type feishuPreviewHandle struct {
 // buildCardJSON builds a Feishu interactive card JSON string with a markdown element.
 // Uses schema 2.0 which supports code blocks, tables, and inline formatting.
 // Card font is inherently smaller than Post/Text — this is a Feishu platform limitation.
+// Note: Feishu has a limit on table count per card, so we process tables carefully.
 func buildCardJSON(content string) string {
+	// Feishu card has limit on table count (max 1 table per markdown element)
+	// Split content by table and create separate elements if needed
+	elements := buildMarkdownElements(content)
+
 	card := map[string]any{
 		"schema": "2.0",
 		"config": map[string]any{
 			"wide_screen_mode": true,
 		},
 		"body": map[string]any{
-			"elements": []map[string]any{
-				{
-					"tag":     "markdown",
-					"content": content,
-				},
-			},
+			"elements": elements,
 		},
 	}
 	b, _ := json.Marshal(card)
 	return string(b)
+}
+
+// buildMarkdownElements splits content into multiple markdown elements if needed
+// to avoid hitting Feishu's table count limit per element.
+func buildMarkdownElements(content string) []map[string]any {
+	lines := strings.Split(content, "\n")
+	var elements []map[string]any
+	var currentChunk []string
+	inTable := false
+	tableCount := 0
+
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		isTableLine := len(trimmed) > 1 && trimmed[0] == '|' && trimmed[len(trimmed)-1] == '|'
+
+		if isTableLine {
+			if !inTable {
+				// Start of new table
+				if tableCount >= 1 && len(currentChunk) > 0 {
+					// Flush current chunk before starting new table
+					elements = append(elements, map[string]any{
+						"tag":     "markdown",
+						"content": strings.Join(currentChunk, "\n"),
+					})
+					currentChunk = nil
+					tableCount = 0
+				}
+				inTable = true
+				tableCount++
+			}
+		} else if inTable && trimmed != "" && !strings.HasPrefix(trimmed, "|") {
+			inTable = false
+		}
+
+		currentChunk = append(currentChunk, line)
+
+		// If we've accumulated too many lines or this is the last line, flush
+		if len(currentChunk) >= 100 || i == len(lines)-1 {
+			if len(currentChunk) > 0 {
+				elements = append(elements, map[string]any{
+					"tag":     "markdown",
+					"content": strings.Join(currentChunk, "\n"),
+				})
+				currentChunk = nil
+				tableCount = 0
+			}
+		}
+	}
+
+	// Flush remaining content
+	if len(currentChunk) > 0 {
+		elements = append(elements, map[string]any{
+			"tag":     "markdown",
+			"content": strings.Join(currentChunk, "\n"),
+		})
+	}
+
+	// If no elements created, return single element
+	if len(elements) == 0 {
+		elements = append(elements, map[string]any{
+			"tag":     "markdown",
+			"content": content,
+		})
+	}
+
+	return elements
 }
 
 // SendPreviewStart sends a new card message and returns a handle for subsequent edits.
@@ -1774,6 +1865,64 @@ func (p *Platform) UpdateMessage(ctx context.Context, previewHandle any, content
 	}
 	if !resp.Success() {
 		return fmt.Errorf("%s: patch message code=%d msg=%s", p.tag(), resp.Code, resp.Msg)
+	}
+	return nil
+}
+
+// SendCollapsible sends a collapsible message using Feishu interactive card.
+// Implements core.CollapsibleSender interface.
+func (p *Platform) SendCollapsible(ctx context.Context, rctx any, title string, content string, collapsed bool) error {
+	rc, ok := rctx.(replyContext)
+	if !ok {
+		return fmt.Errorf("%s: invalid reply context type %T", p.tag(), rctx)
+	}
+	if rc.chatID == "" {
+		return fmt.Errorf("%s: chatID is empty, cannot send collapsible message", p.tag())
+	}
+
+	// Build collapsible_panel card per Feishu official spec
+	card := map[string]any{
+		"schema": "2.0",
+		"body": map[string]any{
+			"elements": []map[string]any{
+				{
+					"tag":              "collapsible_panel",
+					"expanded":         !collapsed,
+					"background_color": "grey",
+					"header": map[string]any{
+						"title": map[string]any{
+							"tag":     "plain_text",
+							"content": title,
+						},
+					},
+					"elements": []map[string]any{
+						{
+							"tag": "div",
+							"text": map[string]any{
+								"tag":     "lark_md",
+								"content": content,
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+	cardJSON, _ := json.Marshal(card)
+
+	resp, err := p.client.Im.Message.Create(ctx, larkim.NewCreateMessageReqBuilder().
+		ReceiveIdType(larkim.ReceiveIdTypeChatId).
+		Body(larkim.NewCreateMessageReqBodyBuilder().
+			ReceiveId(rc.chatID).
+			MsgType(larkim.MsgTypeInteractive).
+			Content(string(cardJSON)).
+			Build()).
+		Build())
+	if err != nil {
+		return fmt.Errorf("%s: send collapsible api call: %w", p.tag(), err)
+	}
+	if !resp.Success() {
+		return fmt.Errorf("%s: send collapsible failed code=%d msg=%s", p.tag(), resp.Code, resp.Msg)
 	}
 	return nil
 }
@@ -1932,4 +2081,238 @@ func (p *Platform) extractPostParts(messageID string, post *postLang) ([]string,
 		}
 	}
 	return textParts, images
+}
+
+// fetchQuotedMessage retrieves the content of a quoted (replied-to) message by its ID.
+// Returns a text prefix (with blockquote formatting) and any images from the quoted message.
+func (p *Platform) fetchQuotedMessage(parentID string) (string, []core.ImageAttachment) {
+	resp, err := p.client.Im.Message.Get(context.Background(),
+		larkim.NewGetMessageReqBuilder().
+			MessageId(parentID).
+			Build())
+	if err != nil {
+		slog.Debug(p.tag()+": fetch quoted message failed", "error", err, "parent_id", parentID)
+		return "", nil
+	}
+	if !resp.Success() {
+		slog.Debug(p.tag()+": fetch quoted message failed", "code", resp.Code, "msg", resp.Msg, "parent_id", parentID)
+		return "", nil
+	}
+
+	if resp.Data == nil || len(resp.Data.Items) == 0 {
+		return "", nil
+	}
+	item := resp.Data.Items[0]
+
+	msgType := ""
+	if item.MsgType != nil {
+		msgType = *item.MsgType
+	}
+	body := ""
+	if item.Body != nil && item.Body.Content != nil {
+		body = *item.Body.Content
+	}
+	if body == "" {
+		return "", nil
+	}
+
+	parentMsgID := parentID
+
+	switch msgType {
+	case "text":
+		var textBody struct {
+			Text string `json:"text"`
+		}
+		if err := json.Unmarshal([]byte(body), &textBody); err != nil {
+			return "", nil
+		}
+		if textBody.Text == "" {
+			return "", nil
+		}
+		return formatQuote(textBody.Text), nil
+
+	case "post":
+		textParts, images := p.parsePostContent(parentMsgID, body)
+		text := strings.Join(textParts, "\n")
+		if text == "" && len(images) == 0 {
+			return "", nil
+		}
+		return formatQuote(text), images
+
+	case "image":
+		var imgBody struct {
+			ImageKey string `json:"image_key"`
+		}
+		if err := json.Unmarshal([]byte(body), &imgBody); err != nil {
+			return "", nil
+		}
+		imgData, mimeType, err := p.downloadImage(parentMsgID, imgBody.ImageKey)
+		if err != nil {
+			slog.Debug(p.tag()+": download quoted image failed", "error", err)
+			return formatQuote("[image]"), nil
+		}
+		return formatQuote("[image]"), []core.ImageAttachment{{MimeType: mimeType, Data: imgData}}
+
+	case "file":
+		var fileBody struct {
+			FileKey  string `json:"file_key"`
+			FileName string `json:"file_name"`
+		}
+		if err := json.Unmarshal([]byte(body), &fileBody); err != nil {
+			return "", nil
+		}
+		return formatQuote(fmt.Sprintf("[file: %s]", fileBody.FileName)), nil
+
+	case "interactive":
+		text := extractCardText(body)
+		if text == "" {
+			return "", nil
+		}
+		return formatQuote(text), nil
+
+	default:
+		return formatQuote(fmt.Sprintf("[%s message]", msgType)), nil
+	}
+}
+
+// extractCardText extracts readable text from a Feishu interactive card.
+func extractCardText(raw string) string {
+	var card map[string]any
+	if err := json.Unmarshal([]byte(raw), &card); err != nil {
+		return ""
+	}
+
+	var parts []string
+
+	// Extract title
+	if title, ok := card["title"].(string); ok && title != "" {
+		parts = append(parts, title)
+	}
+	if header, ok := card["header"].(map[string]any); ok {
+		if title, ok := header["title"].(map[string]any); ok {
+			if content, ok := title["content"].(string); ok && content != "" {
+				parts = append(parts, content)
+			}
+		}
+	}
+
+	// Extract body elements (schema 2.0: body.elements, schema 1.0: elements)
+	var elements []any
+	if body, ok := card["body"].(map[string]any); ok {
+		if elems, ok := body["elements"].([]any); ok {
+			elements = elems
+		}
+	}
+	if elements == nil {
+		if elems, ok := card["elements"].([]any); ok {
+			elements = elems
+		}
+	}
+
+	if len(elements) > 0 {
+		// Detect format: post-like 2D array vs card 1D array
+		if _, isArray := elements[0].([]any); isArray {
+			parts = append(parts, extractPostLikeElements(elements)...)
+		} else {
+			parts = append(parts, extractElementsText(elements)...)
+		}
+	}
+
+	return strings.Join(parts, "\n")
+}
+
+// extractPostLikeElements handles the post-like 2D array format used by some cards.
+func extractPostLikeElements(lines []any) []string {
+	var parts []string
+	for _, line := range lines {
+		lineArr, ok := line.([]any)
+		if !ok {
+			continue
+		}
+		var lineBuf strings.Builder
+		for _, elem := range lineArr {
+			e, ok := elem.(map[string]any)
+			if !ok {
+				continue
+			}
+			if text, ok := e["text"].(string); ok {
+				lineBuf.WriteString(text)
+			}
+		}
+		if lineBuf.Len() > 0 {
+			parts = append(parts, lineBuf.String())
+		}
+	}
+	return parts
+}
+
+// extractElementsText recursively extracts text from card elements.
+func extractElementsText(elements []any) []string {
+	var parts []string
+	for _, elem := range elements {
+		e, ok := elem.(map[string]any)
+		if !ok {
+			continue
+		}
+		tag, _ := e["tag"].(string)
+		switch tag {
+		case "markdown":
+			if content, ok := e["content"].(string); ok && content != "" {
+				parts = append(parts, content)
+			}
+		case "plain_text", "lark_md":
+			if content, ok := e["content"].(string); ok && content != "" {
+				parts = append(parts, content)
+			}
+		case "div":
+			if text, ok := e["text"].(map[string]any); ok {
+				if content, ok := text["content"].(string); ok && content != "" {
+					parts = append(parts, content)
+				}
+			}
+			if fields, ok := e["fields"].([]any); ok {
+				parts = append(parts, extractElementsText(fields)...)
+			}
+		case "column_set":
+			if columns, ok := e["columns"].([]any); ok {
+				for _, col := range columns {
+					if c, ok := col.(map[string]any); ok {
+						if elems, ok := c["elements"].([]any); ok {
+							parts = append(parts, extractElementsText(elems)...)
+						}
+					}
+				}
+			}
+		case "collapsible_panel":
+			if elems, ok := e["elements"].([]any); ok {
+				parts = append(parts, extractElementsText(elems)...)
+			}
+		default:
+			if text, ok := e["text"].(map[string]any); ok {
+				if content, ok := text["content"].(string); ok && content != "" {
+					parts = append(parts, content)
+				}
+			}
+			if elems, ok := e["elements"].([]any); ok {
+				parts = append(parts, extractElementsText(elems)...)
+			}
+		}
+	}
+	return parts
+}
+
+// formatQuote wraps text in blockquote format for context.
+func formatQuote(text string) string {
+	if text == "" {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("[Quoted message]\n")
+	for _, line := range strings.Split(text, "\n") {
+		b.WriteString("> ")
+		b.WriteString(line)
+		b.WriteByte('\n')
+	}
+	b.WriteString("\n")
+	return b.String()
 }
