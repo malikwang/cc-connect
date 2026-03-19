@@ -490,6 +490,14 @@ const (
 	MsgWsCloneProgress   MsgKey = "ws_clone_progress"
 	MsgWsCloneSuccess    MsgKey = "ws_clone_success"
 	MsgWsCloneFailed     MsgKey = "ws_clone_failed"
+
+	// Upload server messages
+	MsgUploadFileTooLarge MsgKey = "upload_file_too_large"
+	MsgUploadLinkSent     MsgKey = "upload_link_sent"
+	MsgUploadSuccess      MsgKey = "upload_success"
+	MsgUploadNotEnabled   MsgKey = "upload_not_enabled"
+	MsgUploadCmdNotEnabled MsgKey = "upload_cmd_not_enabled"
+	MsgUploadCmdLink       MsgKey = "upload_cmd_link"
 )
 
 var messages = map[MsgKey]map[Language]string{
@@ -3226,6 +3234,48 @@ var messages = map[MsgKey]map[Language]string{
 		LangTraditionalChinese: "❌ 克隆倉庫失敗: %v",
 		LangJapanese:           "❌ リポジトリのクローンに失敗しました: %v",
 		LangSpanish:            "❌ Error al clonar repositorio: %v",
+	},
+	MsgUploadFileTooLarge: {
+		LangEnglish:            "📁 File \"%s\" is too large (%s). Please upload it via the link below.",
+		LangChinese:            "📁 文件「%s」过大（%s），请通过以下链接上传。",
+		LangTraditionalChinese: "📁 檔案「%s」過大（%s），請透過以下連結上傳。",
+		LangJapanese:           "📁 ファイル「%s」が大きすぎます（%s）。以下のリンクからアップロードしてください。",
+		LangSpanish:            "📁 El archivo \"%s\" es demasiado grande (%s). Súbelo usando el enlace de abajo.",
+	},
+	MsgUploadLinkSent: {
+		LangEnglish:            "🔗 [Click here to upload](%s)\n(Link expires in 30 minutes, single use)",
+		LangChinese:            "🔗 [点击此处上传](%s)\n（链接 30 分钟内有效，仅可使用一次）",
+		LangTraditionalChinese: "🔗 [點擊此處上傳](%s)\n（連結 30 分鐘內有效，僅可使用一次）",
+		LangJapanese:           "🔗 [こちらからアップロード](%s)\n（リンクは30分間有効、1回限り）",
+		LangSpanish:            "🔗 [Haz clic aquí para subir](%s)\n(El enlace expira en 30 minutos, un solo uso)",
+	},
+	MsgUploadSuccess: {
+		LangEnglish:            "✅ File \"%s\" uploaded successfully.",
+		LangChinese:            "✅ 文件「%s」上传成功。",
+		LangTraditionalChinese: "✅ 檔案「%s」上傳成功。",
+		LangJapanese:           "✅ ファイル「%s」のアップロードが完了しました。",
+		LangSpanish:            "✅ Archivo \"%s\" subido exitosamente.",
+	},
+	MsgUploadNotEnabled: {
+		LangEnglish:            "❌ File \"%s\" is too large to download. Upload server is not enabled. Please enable [upload] in config to handle large files.",
+		LangChinese:            "❌ 文件「%s」过大无法下载。上传服务器未启用，请在配置中启用 [upload] 以处理大文件。",
+		LangTraditionalChinese: "❌ 檔案「%s」過大無法下載。上傳伺服器未啟用，請在設定中啟用 [upload] 以處理大檔案。",
+		LangJapanese:           "❌ ファイル「%s」が大きすぎてダウンロードできません。アップロードサーバーが無効です。設定で [upload] を有効にしてください。",
+		LangSpanish:            "❌ El archivo \"%s\" es demasiado grande para descargar. El servidor de subida no está habilitado. Habilite [upload] en la configuración.",
+	},
+	MsgUploadCmdNotEnabled: {
+		LangEnglish:            "❌ Upload server is not enabled. Please enable [upload] in config.toml.",
+		LangChinese:            "❌ 上传服务器未启用，请在 config.toml 中启用 [upload]。",
+		LangTraditionalChinese: "❌ 上傳伺服器未啟用，請在 config.toml 中啟用 [upload]。",
+		LangJapanese:           "❌ アップロードサーバーが無効です。config.toml で [upload] を有効にしてください。",
+		LangSpanish:            "❌ El servidor de subida no está habilitado. Habilite [upload] en config.toml.",
+	},
+	MsgUploadCmdLink: {
+		LangEnglish:            "📤 Upload file via browser:\n🔗 [Click here to upload](%s)\n(Link expires in 30 minutes, single use)",
+		LangChinese:            "📤 通过浏览器上传文件：\n🔗 [点击此处上传](%s)\n（链接 30 分钟内有效，仅可使用一次）",
+		LangTraditionalChinese: "📤 透過瀏覽器上傳檔案：\n🔗 [點擊此處上傳](%s)\n（連結 30 分鐘內有效，僅可使用一次）",
+		LangJapanese:           "📤 ブラウザからファイルをアップロード：\n🔗 [こちらからアップロード](%s)\n（リンクは30分間有効、1回限り）",
+		LangSpanish:            "📤 Sube un archivo desde el navegador:\n🔗 [Haz clic aquí para subir](%s)\n(El enlace expira en 30 minutos, un solo uso)",
 	},
 }
 

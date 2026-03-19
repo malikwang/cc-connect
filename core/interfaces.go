@@ -381,3 +381,14 @@ type CommandRegistrar interface {
 type ChannelNameResolver interface {
 	ResolveChannelName(channelID string) (string, error)
 }
+
+// UploadLinkRequester is a callback that platforms use to request an upload link
+// for files that are too large to download via the platform API.
+// Returns the full URL and true if the upload server is available, or ("", false) otherwise.
+type UploadLinkRequester func(sessionKey, fileName string) (url string, available bool)
+
+// UploadLinkAware is an optional interface for platforms that support
+// falling back to the upload server for large files.
+type UploadLinkAware interface {
+	SetUploadLinkRequester(fn UploadLinkRequester)
+}

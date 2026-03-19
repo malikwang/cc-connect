@@ -83,10 +83,14 @@ type FileAttachment struct {
 // in their prompts so the CLI can read them with built-in tools.
 func SaveFilesToDisk(workDir string, files []FileAttachment) []string {
 	if len(files) == 0 {
+		slog.Debug("SaveFilesToDisk: no files to save")
 		return nil
 	}
 	attachDir := filepath.Join(workDir, ".cc-connect", "attachments")
-	os.MkdirAll(attachDir, 0o755)
+	if err := os.MkdirAll(attachDir, 0o755); err != nil {
+		slog.Error("SaveFilesToDisk: mkdir failed", "error", err, "dir", attachDir)
+	}
+	slog.Info("SaveFilesToDisk: saving files", "count", len(files), "work_dir", workDir, "attach_dir", attachDir)
 
 	var paths []string
 	for i, f := range files {
@@ -96,11 +100,16 @@ func SaveFilesToDisk(workDir string, files []FileAttachment) []string {
 		}
 		fpath := filepath.Join(attachDir, fname)
 		if err := os.WriteFile(fpath, f.Data, 0o644); err != nil {
-			slog.Error("SaveFilesToDisk: write failed", "error", err)
+			slog.Error("SaveFilesToDisk: write failed", "error", err, "path", fpath, "data_len", len(f.Data))
 			continue
 		}
+		// Verify file exists after write
+		if info, err := os.Stat(fpath); err != nil {
+			slog.Error("SaveFilesToDisk: file not found after write", "error", err, "path", fpath)
+		} else {
+			slog.Info("SaveFilesToDisk: file saved and verified", "path", fpath, "name", f.FileName, "mime", f.MimeType, "data_len", len(f.Data), "disk_size", info.Size())
+		}
 		paths = append(paths, fpath)
-		slog.Debug("SaveFilesToDisk: file saved", "path", fpath, "name", f.FileName, "mime", f.MimeType, "size", len(f.Data))
 	}
 	return paths
 }

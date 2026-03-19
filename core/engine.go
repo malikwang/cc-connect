@@ -175,6 +175,8 @@ type Engine struct {
 	relayManager     *RelayManager
 	eventIdleTimeout time.Duration
 
+	uploadServer *UploadServer
+
 	// Multi-workspace mode
 	multiWorkspace    bool
 	baseDir           string
@@ -454,6 +456,89 @@ func (e *Engine) SetAliasSaveAddFunc(fn func(name, command string) error) {
 
 func (e *Engine) SetAliasSaveDelFunc(fn func(name string) error) {
 	e.aliasSaveDelFunc = fn
+}
+
+// SetUploadServer stores a reference to the upload server for file injection.
+func (e *Engine) SetUploadServer(u *UploadServer) {
+	e.uploadServer = u
+}
+
+// RequestUploadLink creates an upload link via the upload server.
+// Returns the URL and true if available, or ("", false) if upload server is not configured.
+func (e *Engine) RequestUploadLink(sessionKey, fileName string) (string, bool) {
+	if e.uploadServer == nil {
+		return "", false
+	}
+	workDir := ""
+	if wd, ok := e.agent.(interface{ GetWorkDir() string }); ok {
+		workDir = wd.GetWorkDir()
+	}
+	if workDir == "" {
+		workDir, _ = os.Getwd()
+	}
+	url := e.uploadServer.CreateUploadLink(sessionKey, fileName, workDir)
+	return url, true
+}
+
+// GetPlatforms returns the engine's platform list (for upload server wiring).
+func (e *Engine) GetPlatforms() []Platform {
+	return e.platforms
+}
+
+// InjectUploadedFile notifies the user and sends the uploaded file to the agent session.
+func (e *Engine) InjectUploadedFile(sessionKey, filePath, fileName string) {
+	platformName := ""
+	if idx := strings.Index(sessionKey, ":"); idx > 0 {
+		platformName = sessionKey[:idx]
+	}
+
+	var targetPlatform Platform
+	for _, p := range e.platforms {
+		if p.Name() == platformName {
+			targetPlatform = p
+			break
+		}
+	}
+	if targetPlatform == nil {
+		slog.Error("upload: platform not found", "platform", platformName, "session", sessionKey)
+		return
+	}
+
+	rc, ok := targetPlatform.(ReplyContextReconstructor)
+	if !ok {
+		slog.Error("upload: platform does not support proactive messaging", "platform", platformName)
+		return
+	}
+
+	replyCtx, err := rc.ReconstructReplyCtx(sessionKey)
+	if err != nil {
+		slog.Error("upload: reconstruct reply context failed", "error", err)
+		return
+	}
+
+	// Notify user of success
+	e.send(targetPlatform, replyCtx, e.i18n.Tf(MsgUploadSuccess, fileName))
+
+	// Send file to agent session
+	prompt := AppendFileRefs("", []string{filePath})
+	msg := &Message{
+		SessionKey: sessionKey,
+		Platform:   platformName,
+		UserID:     "upload",
+		UserName:   "upload",
+		Content:    prompt,
+		ReplyCtx:   replyCtx,
+	}
+
+	session := e.sessions.GetOrCreateActive(sessionKey)
+	if !session.TryLock() {
+		slog.Warn("upload: session busy, queuing file message", "session", sessionKey)
+		e.send(targetPlatform, replyCtx, "⏳ Session busy, file will be processed when available.")
+		return
+	}
+
+	e.processInteractiveMessage(targetPlatform, msg, session)
+	slog.Info("upload: file injected to agent", "session", sessionKey, "file", filePath)
 }
 
 // ClearAliases removes all aliases (for config reload).
@@ -943,8 +1028,12 @@ func (e *Engine) handleMessage(p Platform, msg *Message) {
 		"platform", msg.Platform, "msg_id", msg.MessageID,
 		"session", msg.SessionKey, "user", msg.UserName,
 		"content_len", len(msg.Content),
-		"has_images", len(msg.Images) > 0, "has_audio", msg.Audio != nil, "has_files", len(msg.Files) > 0,
+		"has_images", len(msg.Images) > 0, "has_audio", msg.Audio != nil,
+		"has_files", len(msg.Files) > 0, "file_count", len(msg.Files),
 	)
+	for i, f := range msg.Files {
+		slog.Info("message file detail", "index", i, "name", f.FileName, "mime", f.MimeType, "data_len", len(f.Data))
+	}
 
 	// Voice message: transcribe to text first
 	if msg.Audio != nil {
@@ -2373,6 +2462,7 @@ var builtinCommands = []struct {
 	{[]string{"dir", "cd", "chdir", "workdir"}, "dir"},
 	{[]string{"tts"}, "tts"},
 	{[]string{"workspace", "ws"}, "workspace"},
+	{[]string{"upload"}, "upload"},
 }
 
 // isBtwCommand checks if a trimmed message starts with a /btw command.
@@ -2564,6 +2654,9 @@ func (e *Engine) handleCommand(p Platform, msg *Message, raw string) bool {
 			return true
 		}
 		e.handleWorkspaceCommand(p, msg, args)
+		return true
+	case "upload":
+		e.cmdUpload(p, msg)
 		return true
 	default:
 		if custom, ok := e.commands.Resolve(cmd); ok {
@@ -4378,6 +4471,24 @@ func (e *Engine) cmdQuiet(p Platform, msg *Message, args []string) {
 	} else {
 		e.reply(p, msg.ReplyCtx, e.i18n.T(MsgQuietOff))
 	}
+}
+
+func (e *Engine) cmdUpload(p Platform, msg *Message) {
+	if e.uploadServer == nil {
+		e.reply(p, msg.ReplyCtx, e.i18n.T(MsgUploadCmdNotEnabled))
+		return
+	}
+
+	workDir := ""
+	if wd, ok := e.agent.(interface{ GetWorkDir() string }); ok {
+		workDir = wd.GetWorkDir()
+	}
+	if workDir == "" {
+		workDir, _ = os.Getwd()
+	}
+
+	url := e.uploadServer.CreateUploadLink(msg.SessionKey, "upload", workDir)
+	e.reply(p, msg.ReplyCtx, e.i18n.Tf(MsgUploadCmdLink, url))
 }
 
 func (e *Engine) cmdTTS(p Platform, msg *Message, args []string) {

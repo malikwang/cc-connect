@@ -170,6 +170,21 @@ level = "info" # debug, info, warn, error
 # cors_origins = ["http://localhost:3000"]  # Allowed CORS origins / 允许的 CORS 来源
 
 # =============================================================================
+# Upload Server (Large File Fallback) / 上传服务器（大文件回退）
+# =============================================================================
+# Local HTTP server for browser-based file uploads. When a file is too large
+# (>100MB) for the platform API to download, cc-connect sends the user a
+# clickable upload link instead.
+# 本地 HTTP 上传服务器。当文件过大（>100MB）无法通过平台 API 下载时，
+# cc-connect 会向用户发送可点击的上传链接。
+#
+# [upload]
+# enabled = true
+# port = 9830                           # HTTP listen port (default: 9830) / 监听端口
+# external_url = "http://your-server:9830"  # URL reachable from user's browser / 用户浏览器可访问的 URL
+# max_size_mb = 500                     # Max upload size in MB (default: 500) / 最大上传大小（MB）
+
+# =============================================================================
 # Speech-to-Text (Voice Messages) / 语音转文字（语音消息）
 # =============================================================================
 # Enable to transcribe voice messages to text before sending to agents.

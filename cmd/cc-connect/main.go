@@ -588,6 +588,27 @@ func main() {
 		mgmtSrv.Start()
 	}
 
+	// Start upload server if enabled
+	var uploadSrv *core.UploadServer
+	if cfg.Upload.Enabled != nil && *cfg.Upload.Enabled {
+		port := cfg.Upload.Port
+		if port <= 0 {
+			port = 9830
+		}
+		uploadSrv = core.NewUploadServer(port, cfg.Upload.ExternalURL, cfg.Upload.MaxSizeMB)
+		for i, e := range engines {
+			uploadSrv.RegisterEngine(cfg.Projects[i].Name, e)
+			e.SetUploadServer(uploadSrv)
+			// Inject upload link requester into platforms that support it
+			for _, p := range e.GetPlatforms() {
+				if ula, ok := p.(core.UploadLinkAware); ok {
+					ula.SetUploadLinkRequester(e.RequestUploadLink)
+				}
+			}
+		}
+		uploadSrv.Start()
+	}
+
 	// Start internal API server for CLI send
 	apiSrv, err := core.NewAPIServer(cfg.DataDir)
 	if err != nil {
@@ -643,6 +664,9 @@ func main() {
 	}
 	if webhookSrv != nil {
 		webhookSrv.Stop()
+	}
+	if uploadSrv != nil {
+		uploadSrv.Stop()
 	}
 	heartbeatSched.Stop()
 	if cronSched != nil {

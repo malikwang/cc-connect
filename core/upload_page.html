@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Upload File — cc-connect</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:#f5f5f5;display:flex;justify-content:center;align-items:center;min-height:100vh;padding:20px}
+.card{background:#fff;border-radius:12px;box-shadow:0 2px 12px rgba(0,0,0,.1);padding:40px;max-width:500px;width:100%;text-align:center}
+h1{font-size:1.4em;color:#333;margin-bottom:8px}
+.subtitle{color:#888;font-size:.9em;margin-bottom:24px}
+.drop-zone{border:2px dashed #ccc;border-radius:8px;padding:40px 20px;cursor:pointer;transition:all .2s;color:#999;margin-bottom:16px}
+.drop-zone:hover,.drop-zone.dragover{border-color:#4a90d9;background:#f0f7ff;color:#4a90d9}
+.drop-zone p{margin:8px 0}
+.drop-zone .icon{font-size:2em}
+input[type=file]{display:none}
+.file-info{margin:12px 0;color:#555;font-size:.9em;word-break:break-all}
+.progress-wrap{display:none;margin:16px 0}
+.progress-bar{width:100%;height:8px;background:#eee;border-radius:4px;overflow:hidden}
+.progress-fill{height:100%;background:#4a90d9;width:0;transition:width .1s}
+.progress-text{font-size:.85em;color:#888;margin-top:6px}
+.btn{display:inline-block;padding:12px 32px;background:#4a90d9;color:#fff;border:none;border-radius:6px;font-size:1em;cursor:pointer;transition:background .2s}
+.btn:hover{background:#3a7bc8}
+.btn:disabled{background:#ccc;cursor:not-allowed}
+.msg{margin-top:16px;padding:12px;border-radius:6px;font-size:.9em}
+.msg.ok{background:#e8f5e9;color:#2e7d32}
+.msg.err{background:#ffebee;color:#c62828}
+</style>
+</head>
+<body>
+<div class="card">
+  <h1>📁 Upload File</h1>
+  <p class="subtitle">{{.FileName}}</p>
+  <div class="drop-zone" id="dropZone">
+    <p class="icon">📤</p>
+    <p>Drag &amp; drop file here or click to select</p>
+  </div>
+  <input type="file" id="fileInput">
+  <div class="file-info" id="fileInfo"></div>
+  <div class="progress-wrap" id="progressWrap">
+    <div class="progress-bar"><div class="progress-fill" id="progressFill"></div></div>
+    <div class="progress-text" id="progressText">0%</div>
+  </div>
+  <button class="btn" id="uploadBtn" disabled>Upload</button>
+  <div class="msg" id="msg" style="display:none"></div>
+</div>
+<script>
+(function(){
+  var dropZone=document.getElementById('dropZone'),
+      fileInput=document.getElementById('fileInput'),
+      fileInfo=document.getElementById('fileInfo'),
+      uploadBtn=document.getElementById('uploadBtn'),
+      progressWrap=document.getElementById('progressWrap'),
+      progressFill=document.getElementById('progressFill'),
+      progressText=document.getElementById('progressText'),
+      msgEl=document.getElementById('msg'),
+      selectedFile=null;
+
+  dropZone.addEventListener('click',function(){fileInput.click()});
+  dropZone.addEventListener('dragover',function(e){e.preventDefault();dropZone.classList.add('dragover')});
+  dropZone.addEventListener('dragleave',function(){dropZone.classList.remove('dragover')});
+  dropZone.addEventListener('drop',function(e){
+    e.preventDefault();dropZone.classList.remove('dragover');
+    if(e.dataTransfer.files.length)selectFile(e.dataTransfer.files[0]);
+  });
+  fileInput.addEventListener('change',function(){if(fileInput.files.length)selectFile(fileInput.files[0])});
+
+  function selectFile(f){
+    selectedFile=f;
+    fileInfo.textContent=f.name+' ('+formatSize(f.size)+')';
+    uploadBtn.disabled=false;
+    msgEl.style.display='none';
+  }
+  function formatSize(b){
+    if(b<1024)return b+' B';
+    if(b<1048576)return (b/1024).toFixed(1)+' KB';
+    if(b<1073741824)return (b/1048576).toFixed(1)+' MB';
+    return (b/1073741824).toFixed(2)+' GB';
+  }
+  uploadBtn.addEventListener('click',function(){
+    if(!selectedFile)return;
+    uploadBtn.disabled=true;
+    progressWrap.style.display='block';
+    msgEl.style.display='none';
+    var fd=new FormData();
+    fd.append('file',selectedFile);
+    var xhr=new XMLHttpRequest();
+    xhr.open('POST',window.location.href,true);
+    xhr.upload.addEventListener('progress',function(e){
+      if(e.lengthComputable){
+        var pct=Math.round(e.loaded/e.total*100);
+        progressFill.style.width=pct+'%';
+        progressText.textContent=pct+'% ('+formatSize(e.loaded)+' / '+formatSize(e.total)+')';
+      }
+    });
+    xhr.addEventListener('load',function(){
+      if(xhr.status===200){
+        msgEl.className='msg ok';msgEl.textContent='Upload successful!';
+        dropZone.style.display='none';
+      }else{
+        msgEl.className='msg err';msgEl.textContent='Upload failed: '+xhr.responseText;
+        uploadBtn.disabled=false;
+      }
+      msgEl.style.display='block';
+    });
+    xhr.addEventListener('error',function(){
+      msgEl.className='msg err';msgEl.textContent='Network error. Please try again.';
+      msgEl.style.display='block';uploadBtn.disabled=false;
+    });
+    xhr.send(fd);
+  });
+})();
+</script>
+</body>
+</html>

@@ -37,7 +37,16 @@ type Config struct {
 	Webhook         WebhookConfig       `toml:"webhook"`
 	Bridge          BridgeConfig        `toml:"bridge"`
 	Management      ManagementConfig    `toml:"management"`
+	Upload          UploadConfig        `toml:"upload"`
 	IdleTimeoutMins *int                `toml:"idle_timeout_mins,omitempty"` // max minutes between agent events; 0 = no timeout; default 120
+}
+
+// UploadConfig controls the local HTTP upload server for large file fallback.
+type UploadConfig struct {
+	Enabled     *bool  `toml:"enabled"`                 // default false
+	Port        int    `toml:"port,omitempty"`           // listen port; default 9830
+	ExternalURL string `toml:"external_url,omitempty"`   // URL reachable from user's browser; default http://localhost:<port>
+	MaxSizeMB   int    `toml:"max_size_mb,omitempty"`    // max upload size in MB; default 500
 }
 
 // CronConfig controls cron job behavior.

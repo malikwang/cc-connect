@@ -61,6 +61,7 @@ type Platform struct {
 	cancel                context.CancelFunc
 	dedup                 core.MessageDedup
 	botOpenID             string
+	uploadLinkRequester   core.UploadLinkRequester
 	userNameCache         sync.Map // open_id -> display name
 	chatNameCache         sync.Map // chat_id -> chat name
 	// Webhook mode fields (for Lark international version)
@@ -713,24 +714,35 @@ func (p *Platform) onMessage(event *larkim.P2MessageReceiveV1) error {
 		var fileBody struct {
 			FileKey  string `json:"file_key"`
 			FileName string `json:"file_name"`
+			FileSize int64  `json:"file_size"`
 		}
 		if err := json.Unmarshal([]byte(*msg.Content), &fileBody); err != nil {
 			slog.Error(p.tag()+": failed to parse file content", "error", err)
 			return nil
 		}
-		slog.Info(p.tag()+": file received", "user", userID, "file_key", fileBody.FileKey, "file_name", fileBody.FileName)
-		fileData, err := p.downloadResource(messageID, fileBody.FileKey, "file")
-		if err != nil {
-			slog.Error(p.tag()+": download file failed", "error", err)
+		slog.Info(p.tag()+": file received", "user", userID, "file_key", fileBody.FileKey, "file_name", fileBody.FileName, "file_size", fileBody.FileSize, "raw_content", *msg.Content)
+
+		const largeFileThreshold = 100 * 1024 * 1024 // 100 MB
+		if fileBody.FileSize > largeFileThreshold {
+			slog.Warn(p.tag()+": file too large for API download, using upload fallback", "file_name", fileBody.FileName, "size", fileBody.FileSize)
+			p.requestUploadFallback(rctx, sessionKey, fileBody.FileName, fileBody.FileSize)
 			return nil
 		}
-		slog.Debug(p.tag()+": file downloaded", "file_name", fileBody.FileName, "size", len(fileData))
+
+		fileData, err := p.downloadResource(messageID, fileBody.FileKey, "file")
+		if err != nil {
+			slog.Error(p.tag()+": download file failed, trying upload fallback", "error", err, "file_name", fileBody.FileName)
+			p.requestUploadFallback(rctx, sessionKey, fileBody.FileName, fileBody.FileSize)
+			return nil
+		}
 		mimeType := detectMimeType(fileData)
+		slog.Info(p.tag()+": file downloaded successfully", "file_name", fileBody.FileName, "size", len(fileData), "mime", mimeType)
 		files := append(quotedFiles, core.FileAttachment{
 			MimeType: mimeType,
 			Data:     fileData,
 			FileName: fileBody.FileName,
 		})
+		slog.Info(p.tag()+": dispatching file to handler", "file_name", fileBody.FileName, "total_files", len(files), "content", quotedPrefix, "session", sessionKey)
 		p.handler(p.dispatchPlatform(), &core.Message{
 			SessionKey: sessionKey, Platform: p.platformName,
 			MessageID: messageID,
@@ -1201,6 +1213,57 @@ func (p *Platform) downloadImage(messageID, imageKey string) ([]byte, string, er
 	mimeType := detectMimeType(data)
 	slog.Debug(p.tag()+": downloaded image", "key", imageKey, "size", len(data), "mime", mimeType)
 	return data, mimeType, nil
+}
+
+// SetUploadLinkRequester implements core.UploadLinkAware.
+func (p *Platform) SetUploadLinkRequester(fn core.UploadLinkRequester) {
+	p.uploadLinkRequester = fn
+}
+
+// requestUploadFallback sends the user an upload link or an error message
+// when a file is too large or fails to download via the platform API.
+func (p *Platform) requestUploadFallback(replyCtx any, sessionKey, fileName string, fileSize int64) {
+	if p.uploadLinkRequester == nil {
+		// Upload server not configured — send error
+		msg := fmt.Sprintf("❌ File \"%s\" is too large to download. Upload server is not enabled.", fileName)
+		if err := p.Send(context.Background(), replyCtx, msg); err != nil {
+			slog.Error(p.tag()+": send upload-not-enabled msg failed", "error", err)
+		}
+		return
+	}
+
+	url, available := p.uploadLinkRequester(sessionKey, fileName)
+	if !available {
+		msg := fmt.Sprintf("❌ File \"%s\" is too large to download. Upload server is not available.", fileName)
+		if err := p.Send(context.Background(), replyCtx, msg); err != nil {
+			slog.Error(p.tag()+": send upload-not-available msg failed", "error", err)
+		}
+		return
+	}
+
+	sizeStr := formatFileSize(fileSize)
+	msg := fmt.Sprintf("📁 File \"%s\" is too large (%s). Please upload via browser:\n🔗 [Click here to upload](%s)\n(Link expires in 30 minutes, single use)", fileName, sizeStr, url)
+	if err := p.Send(context.Background(), replyCtx, msg); err != nil {
+		slog.Error(p.tag()+": send upload link failed", "error", err)
+	}
+}
+
+func formatFileSize(b int64) string {
+	const (
+		kb = 1024
+		mb = 1024 * kb
+		gb = 1024 * mb
+	)
+	switch {
+	case b >= gb:
+		return fmt.Sprintf("%.1f GB", float64(b)/float64(gb))
+	case b >= mb:
+		return fmt.Sprintf("%.1f MB", float64(b)/float64(mb))
+	case b >= kb:
+		return fmt.Sprintf("%.1f KB", float64(b)/float64(kb))
+	default:
+		return fmt.Sprintf("%d B", b)
+	}
 }
 
 func (p *Platform) downloadResource(messageID, fileKey, resType string) ([]byte, error) {

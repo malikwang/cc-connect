@@ -381,7 +381,9 @@ func (cs *claudeSession) Send(prompt string, images []core.ImageAttachment, file
 	}
 
 	// Save files to disk so Claude Code can read them
+	slog.Info("claudeSession: saving files to disk", "count", len(files), "work_dir", cs.workDir)
 	filePaths := core.SaveFilesToDisk(cs.workDir, files)
+	slog.Info("claudeSession: files saved", "file_paths", filePaths)
 
 	// Build text part: user prompt + file path references
 	textPart := prompt
@@ -396,6 +398,7 @@ func (cs *claudeSession) Send(prompt string, images []core.ImageAttachment, file
 	if len(filePaths) > 0 {
 		textPart += "\n\n(Files saved locally, please read them: " + strings.Join(filePaths, ", ") + ")"
 	}
+	slog.Info("claudeSession: sending prompt with files to agent", "text_part", textPart, "parts_count", len(parts)+1)
 	parts = append(parts, map[string]any{"type": "text", "text": textPart})
 
 	return cs.writeJSON(map[string]any{
