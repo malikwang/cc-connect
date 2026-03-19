@@ -517,11 +517,11 @@ func (p *Platform) addReaction(messageID string) string {
 				Build()).
 			Build())
 	if err != nil {
-		slog.Debug(p.tag()+": add reaction failed", "error", err)
+		slog.Warn(p.tag()+": add reaction failed", "error", err)
 		return ""
 	}
 	if !resp.Success() {
-		slog.Debug(p.tag()+": add reaction failed", "code", resp.Code, "msg", resp.Msg)
+		slog.Warn(p.tag()+": add reaction failed", "code", resp.Code, "msg", resp.Msg)
 		return ""
 	}
 	if resp.Data != nil && resp.Data.ReactionId != nil {
@@ -540,11 +540,11 @@ func (p *Platform) removeReaction(messageID, reactionID string) {
 			ReactionId(reactionID).
 			Build())
 	if err != nil {
-		slog.Debug(p.tag()+": remove reaction failed", "error", err)
+		slog.Warn(p.tag()+": remove reaction failed", "error", err)
 		return
 	}
 	if !resp.Success() {
-		slog.Debug(p.tag()+": remove reaction failed", "code", resp.Code, "msg", resp.Msg)
+		slog.Warn(p.tag()+": remove reaction failed", "code", resp.Code, "msg", resp.Msg)
 	}
 }
 
@@ -609,7 +609,7 @@ func (p *Platform) onMessage(event *larkim.P2MessageReceiveV1) error {
 		chatType = *msg.ChatType
 	}
 	mentionCount := len(msg.Mentions)
-	slog.Debug(p.tag()+": inbound message",
+	slog.Info(p.tag()+": inbound message",
 		"message_id", messageID,
 		"chat_id", chatID,
 		"chat_type", chatType,
@@ -623,24 +623,24 @@ func (p *Platform) onMessage(event *larkim.P2MessageReceiveV1) error {
 
 	if chatType == "group" && !p.groupReplyAll && p.botOpenID != "" {
 		if !isBotMentioned(msg.Mentions, p.botOpenID) {
-			slog.Debug(p.tag()+": ignoring group message without bot mention", "chat_id", chatID)
+			slog.Info(p.tag()+": ignoring group message without bot mention", "chat_id", chatID)
 			return nil
 		}
 	}
 
 	if !core.AllowList(p.allowFrom, userID) {
-		slog.Debug(p.tag()+": message from unauthorized user", "user", userID)
+		slog.Warn(p.tag()+": message from unauthorized user", "user", userID)
 		return nil
 	}
 
 	if msg.Content == nil && msgType != "merge_forward" {
-		slog.Debug(p.tag()+": message content is nil", "message_id", messageID, "type", msgType)
+		slog.Warn(p.tag()+": message content is nil", "message_id", messageID, "type", msgType)
 		return nil
 	}
 
 	sessionKey := p.makeSessionKey(msg, chatID, userID)
 	rctx := replyContext{messageID: messageID, chatID: chatID, sessionKey: sessionKey}
-	slog.Debug(p.tag()+": routed inbound message",
+	slog.Info(p.tag()+": routed inbound message",
 		"message_id", messageID,
 		"session_key", sessionKey,
 		"reply_in_thread", p.shouldReplyInThread(rctx),
@@ -651,7 +651,7 @@ func (p *Platform) onMessage(event *larkim.P2MessageReceiveV1) error {
 	var quotedImages []core.ImageAttachment
 	var quotedFiles []core.FileAttachment
 	if msg.ParentId != nil && *msg.ParentId != "" {
-		quotedPrefix, quotedImages, quotedFiles = p.fetchQuotedMessage(*msg.ParentId)
+		quotedPrefix, quotedImages, quotedFiles = p.fetchQuotedMessage(*msg.ParentId, rctx, sessionKey)
 	}
 
 	switch msgType {
@@ -713,7 +713,7 @@ func (p *Platform) onMessage(event *larkim.P2MessageReceiveV1) error {
 			slog.Error(p.tag()+": failed to parse audio content", "error", err)
 			return nil
 		}
-		slog.Debug(p.tag()+": audio received", "user", userID, "file_key", audioBody.FileKey)
+		slog.Info(p.tag()+": audio received", "user", userID, "file_key", audioBody.FileKey)
 		audioData, err := p.downloadResource(messageID, audioBody.FileKey, "file")
 		if err != nil {
 			slog.Error(p.tag()+": download audio failed", "error", err)
@@ -823,7 +823,7 @@ func (p *Platform) onMessage(event *larkim.P2MessageReceiveV1) error {
 		p.handler(p.dispatchPlatform(), coreMsg)
 
 	default:
-		slog.Debug(p.tag()+": ignoring unsupported message type", "type", msgType)
+		slog.Warn(p.tag()+": ignoring unsupported message type", "type", msgType)
 	}
 
 	return nil
@@ -840,11 +840,11 @@ func (p *Platform) resolveUserName(openID string) string {
 			UserIdType("open_id").
 			Build())
 	if err != nil {
-		slog.Debug(p.tag()+": resolve user name failed", "open_id", openID, "error", err)
+		slog.Warn(p.tag()+": resolve user name failed", "open_id", openID, "error", err)
 		return openID
 	}
 	if !resp.Success() || resp.Data == nil || resp.Data.User == nil || resp.Data.User.Name == nil {
-		slog.Debug(p.tag()+": resolve user name: no data", "open_id", openID, "code", resp.Code)
+		slog.Warn(p.tag()+": resolve user name: no data", "open_id", openID, "code", resp.Code)
 		return openID
 	}
 	name := *resp.Data.User.Name
@@ -874,11 +874,11 @@ func (p *Platform) resolveChatName(chatID string) string {
 	resp, err := p.client.Im.Chat.Get(context.Background(),
 		larkim.NewGetChatReqBuilder().ChatId(chatID).Build())
 	if err != nil {
-		slog.Debug(p.tag()+": resolve chat name failed", "chat_id", chatID, "error", err)
+		slog.Warn(p.tag()+": resolve chat name failed", "chat_id", chatID, "error", err)
 		return chatID
 	}
 	if !resp.Success() || resp.Data == nil || resp.Data.Name == nil {
-		slog.Debug(p.tag()+": resolve chat name: no data", "chat_id", chatID, "code", resp.Code)
+		slog.Warn(p.tag()+": resolve chat name: no data", "chat_id", chatID, "code", resp.Code)
 		return chatID
 	}
 	name := *resp.Data.Name
@@ -1264,7 +1264,7 @@ func (p *Platform) downloadImage(messageID, imageKey string) ([]byte, string, er
 	}
 
 	mimeType := detectMimeType(data)
-	slog.Debug(p.tag()+": downloaded image", "key", imageKey, "size", len(data), "mime", mimeType)
+	slog.Info(p.tag()+": downloaded image", "key", imageKey, "size", len(data), "mime", mimeType)
 	return data, mimeType, nil
 }
 
@@ -1339,7 +1339,7 @@ func (p *Platform) downloadResource(messageID, fileKey, resType string) ([]byte,
 	if err != nil {
 		return nil, fmt.Errorf("%s: read resource: %w", p.tag(), err)
 	}
-	slog.Debug(p.tag()+": downloaded resource", "key", fileKey, "type", resType, "size", len(data))
+	slog.Info(p.tag()+": downloaded resource", "key", fileKey, "type", resType, "size", len(data))
 	return data, nil
 }
 
@@ -2101,7 +2101,7 @@ func (p *Platform) SendAudio(ctx context.Context, rctx any, audio []byte, format
 	}
 	fileKey := *uploadResp.Data.FileKey
 
-	slog.Debug(p.tag()+": audio uploaded", "file_key", fileKey, "format", format, "size", len(audio))
+	slog.Info(p.tag()+": audio uploaded", "file_key", fileKey, "format", format, "size", len(audio))
 
 	audioMsg := larkim.MessageAudio{FileKey: fileKey}
 	audioContent, err := audioMsg.String()
@@ -2207,17 +2207,17 @@ func (p *Platform) extractPostParts(messageID string, post *postLang) ([]string,
 
 // fetchQuotedMessage retrieves the content of a quoted (replied-to) message by its ID.
 // Returns a text prefix (with blockquote formatting), any images, and any files from the quoted message.
-func (p *Platform) fetchQuotedMessage(parentID string) (string, []core.ImageAttachment, []core.FileAttachment) {
+func (p *Platform) fetchQuotedMessage(parentID string, replyCtx any, sessionKey string) (string, []core.ImageAttachment, []core.FileAttachment) {
 	resp, err := p.client.Im.Message.Get(context.Background(),
 		larkim.NewGetMessageReqBuilder().
 			MessageId(parentID).
 			Build())
 	if err != nil {
-		slog.Debug(p.tag()+": fetch quoted message failed", "error", err, "parent_id", parentID)
+		slog.Error(p.tag()+": fetch quoted message failed", "error", err, "parent_id", parentID)
 		return "", nil, nil
 	}
 	if !resp.Success() {
-		slog.Debug(p.tag()+": fetch quoted message failed", "code", resp.Code, "msg", resp.Msg, "parent_id", parentID)
+		slog.Error(p.tag()+": fetch quoted message failed", "code", resp.Code, "msg", resp.Msg, "parent_id", parentID)
 		return "", nil, nil
 	}
 
@@ -2239,6 +2239,11 @@ func (p *Platform) fetchQuotedMessage(parentID string) (string, []core.ImageAtta
 	}
 
 	parentMsgID := parentID
+	if item.MessageId != nil && *item.MessageId != "" {
+		parentMsgID = *item.MessageId
+	}
+
+	slog.Info(p.tag()+": fetched quoted message", "parent_id", parentID, "msg_id", parentMsgID, "type", msgType)
 
 	switch msgType {
 	case "text":
@@ -2270,7 +2275,7 @@ func (p *Platform) fetchQuotedMessage(parentID string) (string, []core.ImageAtta
 		}
 		imgData, mimeType, err := p.downloadImage(parentMsgID, imgBody.ImageKey)
 		if err != nil {
-			slog.Debug(p.tag()+": download quoted image failed", "error", err)
+			slog.Error(p.tag()+": download quoted image failed", "error", err)
 			return formatQuote("[image]"), nil, nil
 		}
 		return formatQuote("[image]"), []core.ImageAttachment{{MimeType: mimeType, Data: imgData}}, nil
@@ -2285,7 +2290,8 @@ func (p *Platform) fetchQuotedMessage(parentID string) (string, []core.ImageAtta
 		}
 		fileData, err := p.downloadResource(parentMsgID, fileBody.FileKey, "file")
 		if err != nil {
-			slog.Debug(p.tag()+": download quoted file failed", "error", err)
+			slog.Error(p.tag()+": download quoted file failed, trying upload fallback", "error", err, "file_name", fileBody.FileName)
+			p.requestUploadFallback(replyCtx, sessionKey, fileBody.FileName, 0)
 			return formatQuote(fmt.Sprintf("[file: %s]", fileBody.FileName)), nil, nil
 		}
 		mimeType := detectMimeType(fileData)

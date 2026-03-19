@@ -519,8 +519,8 @@ func (e *Engine) InjectUploadedFile(sessionKey, filePath, fileName string) {
 	// Notify user of success
 	e.send(targetPlatform, replyCtx, e.i18n.Tf(MsgUploadSuccess, fileName))
 
-	// Send file to agent session
-	prompt := AppendFileRefs("", []string{filePath})
+	// Send file to agent session — only notify the file path, do not ask agent to analyze
+	prompt := AppendFileRefs(fmt.Sprintf("User uploaded file: %s", fileName), []string{filePath})
 	msg := &Message{
 		SessionKey: sessionKey,
 		Platform:   platformName,
