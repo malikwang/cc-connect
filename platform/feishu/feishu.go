@@ -595,8 +595,9 @@ func (p *Platform) onMessage(event *larkim.P2MessageReceiveV1) error {
 	// Fetch quoted (replied-to) message context if present
 	var quotedPrefix string
 	var quotedImages []core.ImageAttachment
+	var quotedFiles []core.FileAttachment
 	if msg.ParentId != nil && *msg.ParentId != "" {
-		quotedPrefix, quotedImages = p.fetchQuotedMessage(*msg.ParentId)
+		quotedPrefix, quotedImages, quotedFiles = p.fetchQuotedMessage(*msg.ParentId)
 	}
 
 	switch msgType {
@@ -622,6 +623,7 @@ func (p *Platform) onMessage(event *larkim.P2MessageReceiveV1) error {
 			MessageID: messageID,
 			UserID:    userID, UserName: userName, ChatName: chatName,
 			Content: quotedPrefix + text, Images: quotedImages,
+			Files:   quotedFiles,
 			ReplyCtx: rctx,
 		})
 
@@ -644,6 +646,7 @@ func (p *Platform) onMessage(event *larkim.P2MessageReceiveV1) error {
 			MessageID: messageID,
 			UserID:    userID, UserName: userName, ChatName: chatName,
 			Content: quotedPrefix, Images: images,
+			Files:   quotedFiles,
 			ReplyCtx: rctx,
 		})
 
@@ -687,6 +690,7 @@ func (p *Platform) onMessage(event *larkim.P2MessageReceiveV1) error {
 			MessageID: messageID,
 			UserID:    userID, UserName: userName, ChatName: chatName,
 			Content: quotedPrefix + text, Images: images,
+			Files:   quotedFiles,
 			ReplyCtx: rctx,
 		})
 
@@ -701,6 +705,7 @@ func (p *Platform) onMessage(event *larkim.P2MessageReceiveV1) error {
 			MessageID: messageID,
 			UserID:    userID, UserName: userName, ChatName: chatName,
 			Content: quotedPrefix + text, Images: quotedImages,
+			Files:   quotedFiles,
 			ReplyCtx: rctx,
 		})
 
@@ -721,16 +726,17 @@ func (p *Platform) onMessage(event *larkim.P2MessageReceiveV1) error {
 		}
 		slog.Debug(p.tag()+": file downloaded", "file_name", fileBody.FileName, "size", len(fileData))
 		mimeType := detectMimeType(fileData)
+		files := append(quotedFiles, core.FileAttachment{
+			MimeType: mimeType,
+			Data:     fileData,
+			FileName: fileBody.FileName,
+		})
 		p.handler(p.dispatchPlatform(), &core.Message{
 			SessionKey: sessionKey, Platform: p.platformName,
 			MessageID: messageID,
 			UserID:    userID, UserName: userName, ChatName: chatName,
 			Content: quotedPrefix, Images: quotedImages,
-			Files: []core.FileAttachment{{
-				MimeType: mimeType,
-				Data:     fileData,
-				FileName: fileBody.FileName,
-			}},
+			Files:   files,
 			ReplyCtx: rctx,
 		})
 
@@ -2084,23 +2090,23 @@ func (p *Platform) extractPostParts(messageID string, post *postLang) ([]string,
 }
 
 // fetchQuotedMessage retrieves the content of a quoted (replied-to) message by its ID.
-// Returns a text prefix (with blockquote formatting) and any images from the quoted message.
-func (p *Platform) fetchQuotedMessage(parentID string) (string, []core.ImageAttachment) {
+// Returns a text prefix (with blockquote formatting), any images, and any files from the quoted message.
+func (p *Platform) fetchQuotedMessage(parentID string) (string, []core.ImageAttachment, []core.FileAttachment) {
 	resp, err := p.client.Im.Message.Get(context.Background(),
 		larkim.NewGetMessageReqBuilder().
 			MessageId(parentID).
 			Build())
 	if err != nil {
 		slog.Debug(p.tag()+": fetch quoted message failed", "error", err, "parent_id", parentID)
-		return "", nil
+		return "", nil, nil
 	}
 	if !resp.Success() {
 		slog.Debug(p.tag()+": fetch quoted message failed", "code", resp.Code, "msg", resp.Msg, "parent_id", parentID)
-		return "", nil
+		return "", nil, nil
 	}
 
 	if resp.Data == nil || len(resp.Data.Items) == 0 {
-		return "", nil
+		return "", nil, nil
 	}
 	item := resp.Data.Items[0]
 
@@ -2113,7 +2119,7 @@ func (p *Platform) fetchQuotedMessage(parentID string) (string, []core.ImageAtta
 		body = *item.Body.Content
 	}
 	if body == "" {
-		return "", nil
+		return "", nil, nil
 	}
 
 	parentMsgID := parentID
@@ -2124,34 +2130,34 @@ func (p *Platform) fetchQuotedMessage(parentID string) (string, []core.ImageAtta
 			Text string `json:"text"`
 		}
 		if err := json.Unmarshal([]byte(body), &textBody); err != nil {
-			return "", nil
+			return "", nil, nil
 		}
 		if textBody.Text == "" {
-			return "", nil
+			return "", nil, nil
 		}
-		return formatQuote(textBody.Text), nil
+		return formatQuote(textBody.Text), nil, nil
 
 	case "post":
 		textParts, images := p.parsePostContent(parentMsgID, body)
 		text := strings.Join(textParts, "\n")
 		if text == "" && len(images) == 0 {
-			return "", nil
+			return "", nil, nil
 		}
-		return formatQuote(text), images
+		return formatQuote(text), images, nil
 
 	case "image":
 		var imgBody struct {
 			ImageKey string `json:"image_key"`
 		}
 		if err := json.Unmarshal([]byte(body), &imgBody); err != nil {
-			return "", nil
+			return "", nil, nil
 		}
 		imgData, mimeType, err := p.downloadImage(parentMsgID, imgBody.ImageKey)
 		if err != nil {
 			slog.Debug(p.tag()+": download quoted image failed", "error", err)
-			return formatQuote("[image]"), nil
+			return formatQuote("[image]"), nil, nil
 		}
-		return formatQuote("[image]"), []core.ImageAttachment{{MimeType: mimeType, Data: imgData}}
+		return formatQuote("[image]"), []core.ImageAttachment{{MimeType: mimeType, Data: imgData}}, nil
 
 	case "file":
 		var fileBody struct {
@@ -2159,19 +2165,29 @@ func (p *Platform) fetchQuotedMessage(parentID string) (string, []core.ImageAtta
 			FileName string `json:"file_name"`
 		}
 		if err := json.Unmarshal([]byte(body), &fileBody); err != nil {
-			return "", nil
+			return "", nil, nil
 		}
-		return formatQuote(fmt.Sprintf("[file: %s]", fileBody.FileName)), nil
+		fileData, err := p.downloadResource(parentMsgID, fileBody.FileKey, "file")
+		if err != nil {
+			slog.Debug(p.tag()+": download quoted file failed", "error", err)
+			return formatQuote(fmt.Sprintf("[file: %s]", fileBody.FileName)), nil, nil
+		}
+		mimeType := detectMimeType(fileData)
+		return formatQuote(fmt.Sprintf("[file: %s]", fileBody.FileName)), nil, []core.FileAttachment{{
+			MimeType: mimeType,
+			Data:     fileData,
+			FileName: fileBody.FileName,
+		}}
 
 	case "interactive":
 		text := extractCardText(body)
 		if text == "" {
-			return "", nil
+			return "", nil, nil
 		}
-		return formatQuote(text), nil
+		return formatQuote(text), nil, nil
 
 	default:
-		return formatQuote(fmt.Sprintf("[%s message]", msgType)), nil
+		return formatQuote(fmt.Sprintf("[%s message]", msgType)), nil, nil
 	}
 }
 
