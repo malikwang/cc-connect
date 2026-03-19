@@ -16,6 +16,7 @@ import (
 
 	"github.com/chenhg5/cc-connect/config"
 	qrterminal "github.com/mdp/qrterminal/v3"
+	"rsc.io/qr"
 )
 
 const (
@@ -71,6 +72,7 @@ type registrationClient struct {
 
 type registrationFlowOptions struct {
 	TimeoutSeconds int
+	QRImagePath    string
 	Debug          bool
 }
 
@@ -113,7 +115,8 @@ func runFeishuSetup(args []string, requestedMode string) {
 	appID := fs.String("app-id", "", "existing bot app_id")
 	appSecret := fs.String("app-secret", "", "existing bot app_secret")
 	timeout := fs.Int("timeout", 600, "QR onboarding timeout in seconds")
-	setAllowFromEmpty := fs.Bool("set-allow-from-empty", true, "fill allow_from with owner open_id when it is empty")
+	qrImage := fs.String("qr-image", "", "save QR code as PNG image to this path (e.g. qr.png)")
+	setAllowFromEmpty := fs.Bool("set-allow-from-empty", false, "fill allow_from with owner open_id when it is empty (may be inaccurate)")
 	debug := fs.Bool("debug", false, "print debug logs for onboarding requests")
 	fs.Parse(args)
 
@@ -160,6 +163,7 @@ func runFeishuSetup(args []string, requestedMode string) {
 	case feishuSetupModeNew:
 		result, err := runRegistrationFlow(registrationFlowOptions{
 			TimeoutSeconds: *timeout,
+			QRImagePath:    *qrImage,
 			Debug:          *debug,
 		})
 		if err != nil {
@@ -220,7 +224,124 @@ func runFeishuSetup(args []string, requestedMode string) {
 		fmt.Printf("   allow_from: %s\n", saveResult.AllowFrom)
 	}
 	fmt.Println()
+
+	if ownerOpenID != "" {
+		printAllowFromGuidance(resolvedAppID, resolvedAppSecret, ownerOpenID, saveResult)
+	}
+
+	printBotMenuGuidance(saveResult.PlatformType)
+
 	fmt.Println("提醒：扫码新建通常会自动预配权限与事件订阅；请在开放平台核验发布状态与可用范围。")
+}
+
+func printAllowFromGuidance(appID, appSecret, ownerOpenID string, result *config.FeishuCredentialUpdateResult) {
+	botOpenID := fetchBotOpenIDForSetup(appID, appSecret, result.PlatformType)
+
+	if botOpenID != "" && ownerOpenID == botOpenID {
+		fmt.Println("⚠️  注册返回的 open_id 是机器人自身的 ID，不是你的用户 ID。")
+		fmt.Println("   飞书 open_id 是应用级别的标识符，注册流程返回的 ID 无法直接用于 allow_from。")
+		fmt.Println()
+	}
+
+	if result.AllowFrom == "" {
+		fmt.Println("💡 allow_from 未设置（所有用户均可使用）。如需限制访问，请：")
+		fmt.Println("   1. 向机器人发送 /whoami 获取你的 User ID")
+		fmt.Println("   2. 在 config.toml 中设置: allow_from = \"<你的User ID>\"")
+		fmt.Println("   同样，admin_from 也可用 /whoami 获取的 ID 来设置。")
+		fmt.Println()
+	}
+}
+
+func fetchBotOpenIDForSetup(appID, appSecret, platformType string) string {
+	base := openFeishuBaseURL
+	if platformType == "lark" {
+		base = openLarkBaseURL
+	}
+	body, _ := json.Marshal(map[string]string{
+		"app_id":     appID,
+		"app_secret": appSecret,
+	})
+	req, err := http.NewRequest(http.MethodPost, base+"/open-apis/auth/v3/tenant_access_token/internal", bytes.NewReader(body))
+	if err != nil {
+		return ""
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return ""
+	}
+	defer resp.Body.Close()
+	data, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+
+	var tokenResp tenantTokenResponse
+	if err := json.Unmarshal(data, &tokenResp); err != nil || tokenResp.TenantAccessToken == "" {
+		return ""
+	}
+
+	botReq, err := http.NewRequest(http.MethodGet, base+"/open-apis/bot/v3/info", nil)
+	if err != nil {
+		return ""
+	}
+	botReq.Header.Set("Authorization", "Bearer "+tokenResp.TenantAccessToken)
+
+	botResp, err := client.Do(botReq)
+	if err != nil {
+		return ""
+	}
+	defer botResp.Body.Close()
+	botData, _ := io.ReadAll(io.LimitReader(botResp.Body, 1<<20))
+
+	var result struct {
+		Code int `json:"code"`
+		Bot  struct {
+			OpenID string `json:"open_id"`
+		} `json:"bot"`
+	}
+	if err := json.Unmarshal(botData, &result); err != nil || result.Code != 0 {
+		return ""
+	}
+	return result.Bot.OpenID
+}
+
+func printBotMenuGuidance(platformType string) {
+	base := "https://open.feishu.cn"
+	if platformType == "lark" {
+		base = "https://open.larksuite.com"
+	}
+
+	fmt.Println("📋 机器人菜单配置（可选）：")
+	fmt.Println("   飞书机器人支持自定义悬浮菜单，可将常用命令固定在输入框上方。")
+	fmt.Println("   菜单需在开发者后台手动配置（暂不支持 API 设置），步骤：")
+	fmt.Printf("   1. 打开开发者后台: %s/app\n", base)
+	fmt.Println("   2. 选择你的应用 → 应用能力 → 机器人")
+	fmt.Println("   3. 开启「机器人自定义菜单」，选择「悬浮菜单」样式")
+	fmt.Println("   4. 添加菜单项，响应动作选择「发送文字消息」")
+	fmt.Println("   5. 创建版本并发布（生效约需 5 分钟）")
+	fmt.Println()
+	fmt.Println("   推荐菜单配置：")
+	fmt.Println("   ┌─────────────────────────────────────────────┐")
+	fmt.Println("   │ 主菜单: cc-connect                          │")
+	fmt.Println("   │   ├── /help     帮助                        │")
+	fmt.Println("   │   ├── /status   状态                        │")
+	fmt.Println("   │   ├── /new      新会话                      │")
+	fmt.Println("   │   ├── /list     会话列表                    │")
+	fmt.Println("   │   └── /stop     停止                        │")
+	fmt.Println("   │ 主菜单: 设置                                 │")
+	fmt.Println("   │   ├── /model    切换模型                    │")
+	fmt.Println("   │   ├── /mode     切换模式                    │")
+	fmt.Println("   │   ├── /quiet    静默模式                    │")
+	fmt.Println("   │   ├── /lang     语言                        │")
+	fmt.Println("   │   └── /config   配置                        │")
+	fmt.Println("   │ 主菜单: 工具                                 │")
+	fmt.Println("   │   ├── /compress 压缩上下文                  │")
+	fmt.Println("   │   ├── /memory   记忆                        │")
+	fmt.Println("   │   ├── /cron     定时任务                    │")
+	fmt.Println("   │   ├── /whoami   查看我的ID                  │")
+	fmt.Println("   │   └── /doctor   诊断                        │")
+	fmt.Println("   └─────────────────────────────────────────────┘")
+	fmt.Println()
 }
 
 func printFeishuUsage() {
@@ -240,6 +361,7 @@ Options:
   --app-id <id>               Existing app_id
   --app-secret <secret>       Existing app_secret
   --timeout <seconds>         QR onboarding timeout (default: 600)
+  --qr-image <path>           Save QR code as PNG image file (e.g. --qr-image qr.png)
   --set-allow-from-empty      Fill allow_from with owner open_id if empty (default: true)
   --debug                     Print onboarding debug logs
 
@@ -449,6 +571,13 @@ func runRegistrationFlow(opts registrationFlowOptions) (*registrationFlowResult,
 	fmt.Println("请使用飞书/Lark 手机 App 扫码完成机器人创建与授权：")
 	fmt.Printf("URL: %s\n\n", beginRes.VerificationURIComplete)
 	tryPrintTerminalQRCode(beginRes.VerificationURIComplete)
+	if opts.QRImagePath != "" {
+		if err := saveQRCodeImage(beginRes.VerificationURIComplete, opts.QRImagePath); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to save QR image: %v\n", err)
+		} else {
+			fmt.Printf("QR code saved to: %s\n\n", opts.QRImagePath)
+		}
+	}
 
 	interval := beginRes.Interval
 	if interval <= 0 {
@@ -557,7 +686,6 @@ func tryPrintTerminalQRCode(content string) {
 	if content == "" {
 		return
 	}
-	// Render a larger high-contrast QR for better scan success in terminals.
 	qrterminal.GenerateWithConfig(content, qrterminal.Config{
 		Level:      qrterminal.M,
 		Writer:     os.Stdout,
@@ -569,4 +697,13 @@ func tryPrintTerminalQRCode(content string) {
 	if _, err := fmt.Fprintln(os.Stdout); err != nil {
 		return
 	}
+}
+
+func saveQRCodeImage(content, path string) error {
+	code, err := qr.Encode(content, qr.M)
+	if err != nil {
+		return fmt.Errorf("encode QR: %w", err)
+	}
+	code.Scale = 8
+	return os.WriteFile(path, code.PNG(), 0644)
 }
