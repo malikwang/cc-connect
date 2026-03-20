@@ -88,7 +88,7 @@ func SaveFilesToDisk(workDir string, files []FileAttachment) []string {
 	}
 	attachDir := filepath.Join(workDir, ".cc-connect", "attachments")
 	if err := os.MkdirAll(attachDir, 0o755); err != nil {
-		slog.Error("SaveFilesToDisk: mkdir failed", "error", err, "dir", attachDir)
+		slog.Warn("SaveFilesToDisk: mkdir failed", "dir", attachDir, "error", err)
 	}
 	slog.Info("SaveFilesToDisk: saving files", "count", len(files), "work_dir", workDir, "attach_dir", attachDir)
 

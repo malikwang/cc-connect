@@ -51,7 +51,9 @@ func NewAPIServer(dataDir string) (*APIServer, error) {
 	if err != nil {
 		return nil, fmt.Errorf("listen unix socket: %w", err)
 	}
-	os.Chmod(sockPath, 0o600)
+	if err := os.Chmod(sockPath, 0o600); err != nil {
+		slog.Warn("api: chmod socket failed", "path", sockPath, "error", err)
+	}
 
 	s := &APIServer{
 		socketPath: sockPath,
@@ -156,7 +158,9 @@ func (s *APIServer) handleSend(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+	if err := json.NewEncoder(w).Encode(map[string]string{"status": "ok"}); err != nil {
+		slog.Error("api: failed to encode response", "error", err)
+	}
 }
 
 // SendImageRequest is the JSON body for POST /send-image.
@@ -254,7 +258,9 @@ func (s *APIServer) handleSessions(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(result)
+	if err := json.NewEncoder(w).Encode(result); err != nil {
+		slog.Error("api: failed to encode response", "error", err)
+	}
 }
 
 // ── Cron API ───────────────────────────────────────────────────
@@ -354,7 +360,9 @@ func (s *APIServer) handleCronAdd(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(job)
+	if err := json.NewEncoder(w).Encode(job); err != nil {
+		slog.Error("api: failed to encode response", "error", err)
+	}
 }
 
 func (s *APIServer) handleCronList(w http.ResponseWriter, r *http.Request) {
@@ -372,7 +380,7 @@ func (s *APIServer) handleCronList(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(jobs)
+	_ = json.NewEncoder(w).Encode(jobs)
 }
 
 func (s *APIServer) handleCronDel(w http.ResponseWriter, r *http.Request) {
@@ -399,7 +407,7 @@ func (s *APIServer) handleCronDel(w http.ResponseWriter, r *http.Request) {
 
 	if s.cron.RemoveJob(req.ID) {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+		_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 	} else {
 		http.Error(w, fmt.Sprintf("job %q not found", req.ID), http.StatusNotFound)
 	}
@@ -434,7 +442,7 @@ func (s *APIServer) handleRelaySend(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(resp)
+	_ = json.NewEncoder(w).Encode(resp)
 }
 
 func (s *APIServer) handleRelayBind(w http.ResponseWriter, r *http.Request) {
@@ -463,7 +471,7 @@ func (s *APIServer) handleRelayBind(w http.ResponseWriter, r *http.Request) {
 
 	s.relay.Bind(req.Platform, req.ChatID, req.Bots)
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+	_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 }
 
 func (s *APIServer) handleRelayBinding(w http.ResponseWriter, r *http.Request) {
@@ -482,5 +490,5 @@ func (s *APIServer) handleRelayBinding(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(binding)
+	_ = json.NewEncoder(w).Encode(binding)
 }

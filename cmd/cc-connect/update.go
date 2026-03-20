@@ -7,8 +7,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"os"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"sync"
@@ -189,6 +191,8 @@ func runUpdate() {
 		fmt.Fprintf(os.Stderr, "Update failed: %v\n", err)
 		os.Exit(1)
 	}
+
+	syncNpmPackageVersion(execPath, strings.TrimPrefix(latest, "v"))
 
 	fmt.Printf("Updated to %s\n", latest)
 	fmt.Println("Restart cc-connect to use the new version.")
@@ -430,7 +434,9 @@ func replaceExecutable(target, src string) error {
 
 	if err := copyFile(src, target); err != nil {
 		// Attempt to restore
-		os.Rename(backup, target)
+		if restoreErr := os.Rename(backup, target); restoreErr != nil {
+			slog.Warn("update: failed to restore old binary after copy error", "error", restoreErr)
+		}
 		return fmt.Errorf("install new binary: %w", err)
 	}
 
@@ -505,10 +511,10 @@ func isNewer(latest, current string) bool {
 	for i := 0; i < len(lParts) || i < len(cParts); i++ {
 		var lv, cv int
 		if i < len(lParts) {
-			fmt.Sscanf(lParts[i], "%d", &lv)
+			_, _ = fmt.Sscanf(lParts[i], "%d", &lv)
 		}
 		if i < len(cParts) {
-			fmt.Sscanf(cParts[i], "%d", &cv)
+			_, _ = fmt.Sscanf(cParts[i], "%d", &cv)
 		}
 		if lv > cv {
 			return true
@@ -577,4 +583,51 @@ func comparePreRelease(a, b string) int {
 		}
 	}
 	return 0
+}
+
+// syncNpmPackageVersion detects if the binary lives inside an npm package
+// (node_modules/cc-connect/bin/) and updates the package.json version to
+// match the newly installed binary. Without this, the npm wrapper's run.js
+// would see a version mismatch and re-download the old version on next run.
+func syncNpmPackageVersion(execPath, newVer string) {
+	binDir := filepath.Dir(execPath)
+	if filepath.Base(binDir) != "bin" {
+		return
+	}
+	pkgDir := filepath.Dir(binDir)
+	pkgJSON := filepath.Join(pkgDir, "package.json")
+
+	data, err := os.ReadFile(pkgJSON)
+	if err != nil {
+		return
+	}
+
+	var pkg map[string]any
+	if err := json.Unmarshal(data, &pkg); err != nil {
+		return
+	}
+
+	name, _ := pkg["name"].(string)
+	if name != "cc-connect" {
+		return
+	}
+
+	oldVer, _ := pkg["version"].(string)
+	if oldVer == newVer {
+		return
+	}
+
+	pkg["version"] = newVer
+	out, err := json.MarshalIndent(pkg, "", "  ")
+	if err != nil {
+		return
+	}
+	out = append(out, '\n')
+	if err := os.WriteFile(pkgJSON, out, 0o644); err != nil {
+		slog.Warn("update: failed to sync npm package.json version", "error", err)
+		fmt.Println("⚠️  Note: npm package version not synced. If the next run re-downloads an old version,")
+		fmt.Println("   please run: npm update -g cc-connect")
+	} else {
+		slog.Debug("update: synced npm package.json version", "old", oldVer, "new", newVer)
+	}
 }
