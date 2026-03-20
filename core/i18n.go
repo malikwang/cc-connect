@@ -506,6 +506,7 @@ const (
 	MsgTokenUsage      MsgKey = "token_usage"
 	MsgTokenSetInDM    MsgKey = "token_set_in_dm"
 	MsgTokenDeleteHint MsgKey = "token_delete_hint"
+	MsgTokenRequired   MsgKey = "token_required"
 
 	// Upload server messages
 	MsgUploadFileTooLarge MsgKey = "upload_file_too_large"
@@ -3393,6 +3394,13 @@ var messages = map[MsgKey]map[Language]string{
 		LangTraditionalChinese: "\n⚠️ 為安全起見，請刪除聊天中包含你 Token 的訊息。",
 		LangJapanese:           "\n⚠️ セキュリティのため、トークンを含むメッセージをチャットから削除してください。",
 		LangSpanish:            "\n⚠️ Por seguridad, elimina el mensaje que contiene tu token del chat.",
+	},
+	MsgTokenRequired: {
+		LangEnglish:            "🔑 You must set a personal API token before using this bot. Send /token set <key> to get started.",
+		LangChinese:            "🔑 使用前请先设置个人 API Token。发送 /token set <key> 进行设置。",
+		LangTraditionalChinese: "🔑 使用前請先設定個人 API Token。發送 /token set <key> 進行設定。",
+		LangJapanese:           "🔑 このボットを使用する前に、個人 API トークンを設定してください。/token set <key> を送信してください。",
+		LangSpanish:            "🔑 Debes configurar un token API personal antes de usar este bot. Envía /token set <key> para comenzar.",
 	},
 }
 

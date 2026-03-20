@@ -1055,6 +1055,12 @@ func (e *Engine) handleMessage(p Platform, msg *Message) {
 			}
 		}
 		slog.Info("user token info", "user_id", msg.UserID, "token", redacted)
+
+		// Block users who haven't set a personal token (allow /token command through)
+		if tok == "" && !strings.HasPrefix(strings.TrimSpace(msg.Content), "/token") {
+			e.reply(p, msg.ReplyCtx, e.i18n.T(MsgTokenRequired))
+			return
+		}
 	}
 
 	// Voice message: transcribe to text first
