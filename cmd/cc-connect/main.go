@@ -189,6 +189,13 @@ func main() {
 		engine := core.NewEngine(proj.Name, agent, platforms, sessionFile, lang)
 		engine.SetAttachmentSendEnabled(cfg.AttachmentSend != "off")
 
+		// Wire per-user token management
+		if tokenManager, err := core.NewUserTokenManager(cfg.DataDir); err != nil {
+			slog.Warn("user token manager unavailable", "error", err)
+		} else {
+			engine.SetTokenManager(tokenManager)
+		}
+
 		// Wire multi-workspace mode
 		if proj.Mode == "multi-workspace" {
 			baseDir := proj.BaseDir

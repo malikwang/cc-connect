@@ -69,6 +69,18 @@ func newClaudeSession(ctx context.Context, workDir, model, sessionID, mode strin
 		args = append(args, "--append-system-prompt", sysPrompt)
 	}
 
+	// Build a --settings JSON to override env vars that the CLI would
+	// otherwise read from ~/.claude/settings.json (which takes priority
+	// over process-level environment variables). This ensures per-user
+	// tokens and provider env vars actually take effect.
+	settingsEnv := extractSettingsEnv(extraEnv)
+	if len(settingsEnv) > 0 {
+		settingsJSON, err := json.Marshal(map[string]any{"env": settingsEnv})
+		if err == nil {
+			args = append(args, "--settings", string(settingsJSON))
+		}
+	}
+
 	slog.Debug("claudeSession: starting", "args", core.RedactArgs(args), "dir", workDir, "mode", mode)
 
 	cmd := exec.CommandContext(sessionCtx, "claude", args...)
@@ -506,6 +518,26 @@ func (cs *claudeSession) Close() error {
 }
 
 // filterEnv returns a copy of env with entries matching the given key removed.
+// extractSettingsEnv picks env vars from extraEnv that Claude CLI reads from
+// settings.json (ANTHROPIC_API_KEY, ANTHROPIC_BASE_URL, ANTHROPIC_AUTH_TOKEN).
+// These must be passed via --settings to override the user's settings.json.
+func extractSettingsEnv(extraEnv []string) map[string]string {
+	// Keys that Claude CLI loads from settings.json "env" and that would
+	// shadow the same key passed as a process environment variable.
+	settingsKeys := map[string]bool{
+		"ANTHROPIC_API_KEY":    true,
+		"ANTHROPIC_BASE_URL":   true,
+		"ANTHROPIC_AUTH_TOKEN": true,
+	}
+	out := make(map[string]string)
+	for _, e := range extraEnv {
+		if k, v, ok := strings.Cut(e, "="); ok && settingsKeys[k] {
+			out[k] = v
+		}
+	}
+	return out
+}
+
 func filterEnv(env []string, key string) []string {
 	prefix := key + "="
 	out := make([]string, 0, len(env))

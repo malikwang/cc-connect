@@ -178,6 +178,7 @@ type Engine struct {
 	eventIdleTimeout time.Duration
 
 	uploadServer *UploadServer
+	tokenManager *UserTokenManager
 
 	// Multi-workspace mode
 	multiWorkspace    bool
@@ -463,6 +464,11 @@ func (e *Engine) SetAliasSaveDelFunc(fn func(name string) error) {
 // SetUploadServer stores a reference to the upload server for file injection.
 func (e *Engine) SetUploadServer(u *UploadServer) {
 	e.uploadServer = u
+}
+
+// SetTokenManager sets the per-user token manager.
+func (e *Engine) SetTokenManager(tm *UserTokenManager) {
+	e.tokenManager = tm
 }
 
 // RequestUploadLink creates an upload link via the upload server.
@@ -1037,6 +1043,20 @@ func (e *Engine) handleMessage(p Platform, msg *Message) {
 		slog.Info("message file detail", "index", i, "name", f.FileName, "mime", f.MimeType, "data_len", len(f.Data))
 	}
 
+	// Log user token status (redacted)
+	if e.tokenManager != nil && msg.UserID != "" {
+		tok := e.tokenManager.GetToken(msg.UserID)
+		redacted := "(none)"
+		if tok != "" {
+			if len(tok) > 8 {
+				redacted = tok[:4] + "****" + tok[len(tok)-4:]
+			} else {
+				redacted = "****"
+			}
+		}
+		slog.Info("user token info", "user_id", msg.UserID, "token", redacted)
+	}
+
 	// Voice message: transcribe to text first
 	if msg.Audio != nil {
 		// If STT is configured, use it for transcription (more accurate)
@@ -1561,7 +1581,7 @@ func (e *Engine) processInteractiveMessageWith(p Platform, msg *Message, session
 	if agent != e.agent {
 		agentOverride = agent
 	}
-	state := e.getOrCreateInteractiveStateWith(interactiveKey, p, msg.ReplyCtx, session, sessions, agentOverride)
+	state := e.getOrCreateInteractiveStateWith(interactiveKey, p, msg.ReplyCtx, session, sessions, agentOverride, msg.UserID)
 
 	// Set workspaceDir on the state for idle reaper identification
 	if workspaceDir != "" {
@@ -1622,7 +1642,7 @@ func (e *Engine) processInteractiveMessageWith(p Platform, msg *Message, session
 			e.cleanupInteractiveState(interactiveKey, state)
 			e.send(p, msg.ReplyCtx, e.i18n.T(MsgSessionRestarting))
 
-			state = e.getOrCreateInteractiveStateWith(interactiveKey, p, msg.ReplyCtx, session, sessions, agentOverride)
+			state = e.getOrCreateInteractiveStateWith(interactiveKey, p, msg.ReplyCtx, session, sessions, agentOverride, msg.UserID)
 			if workspaceDir != "" {
 				state.mu.Lock()
 				state.workspaceDir = workspaceDir
@@ -1722,7 +1742,7 @@ func (e *Engine) getOrCreateWorkspaceAgent(workspace string) (Agent, *SessionMan
 // getOrCreateInteractiveStateWith accepts
 // an optional agent override for multi-workspace mode. When agentOverride is non-nil
 // it is used instead of e.agent to start the session.
-func (e *Engine) getOrCreateInteractiveStateWith(sessionKey string, p Platform, replyCtx any, session *Session, sessions *SessionManager, agentOverride Agent) *interactiveState {
+func (e *Engine) getOrCreateInteractiveStateWith(sessionKey string, p Platform, replyCtx any, session *Session, sessions *SessionManager, agentOverride Agent, userID string) *interactiveState {
 	e.interactiveMu.Lock()
 	defer e.interactiveMu.Unlock()
 
@@ -1775,6 +1795,13 @@ func (e *Engine) getOrCreateInteractiveStateWith(sessionKey string, p Platform, 
 				envVars = append(envVars, "PATH="+binDir+string(filepath.ListSeparator)+curPath)
 			} else {
 				envVars = append(envVars, "PATH="+binDir)
+			}
+		}
+		// Inject per-user API token if configured
+		if e.tokenManager != nil && userID != "" {
+			if userToken := e.tokenManager.GetToken(userID); userToken != "" {
+				envVars = append(envVars, "ANTHROPIC_API_KEY="+userToken)
+				slog.Info("token: injected user token into session env", "user_id", userID)
 			}
 		}
 		inj.SetSessionEnv(envVars)
@@ -2464,6 +2491,7 @@ var builtinCommands = []struct {
 	{[]string{"workspace", "ws"}, "workspace"},
 	{[]string{"upload"}, "upload"},
 	{[]string{"whoami", "myid"}, "whoami"},
+	{[]string{"token"}, "token"},
 }
 
 // isBtwCommand checks if a trimmed message starts with a /btw command.
@@ -2661,6 +2689,9 @@ func (e *Engine) handleCommand(p Platform, msg *Message, raw string) bool {
 		return true
 	case "whoami":
 		e.cmdWhoami(p, msg)
+		return true
+	case "token":
+		e.cmdToken(p, msg, args)
 		return true
 	default:
 		if custom, ok := e.commands.Resolve(cmd); ok {
@@ -7612,6 +7643,64 @@ func (e *Engine) renderWhoamiCard(msg *Message) *Card {
 		Note(e.i18n.T(MsgWhoamiUsage)).
 		Buttons(e.cardBackButton()).
 		Build()
+}
+
+// ── /token command ──────────────────────────────────────────
+
+func (e *Engine) cmdToken(p Platform, msg *Message, args []string) {
+	if e.tokenManager == nil {
+		e.reply(p, msg.ReplyCtx, e.i18n.T(MsgTokenUsage))
+		return
+	}
+
+	sub := ""
+	if len(args) > 0 {
+		sub = strings.ToLower(args[0])
+	}
+
+	switch sub {
+	case "set":
+		if len(args) < 2 {
+			// No key provided
+			if !msg.IsDirectMessage {
+				e.reply(p, msg.ReplyCtx, e.i18n.T(MsgTokenSetInDM))
+			} else {
+				e.reply(p, msg.ReplyCtx, e.i18n.T(MsgTokenUsage))
+			}
+			return
+		}
+		token := args[1]
+		if err := e.tokenManager.SetToken(msg.UserID, token); err != nil {
+			slog.Error("token: set failed", "user_id", msg.UserID, "error", err)
+			e.reply(p, msg.ReplyCtx, fmt.Sprintf(e.i18n.T(MsgError), err))
+			return
+		}
+		slog.Info("token: user token set", "user_id", msg.UserID)
+		reply := e.i18n.T(MsgTokenSet)
+		if !msg.IsDirectMessage {
+			reply += e.i18n.T(MsgTokenDeleteHint)
+		}
+		e.reply(p, msg.ReplyCtx, reply)
+
+	case "clear":
+		if err := e.tokenManager.ClearToken(msg.UserID); err != nil {
+			slog.Error("token: clear failed", "user_id", msg.UserID, "error", err)
+			e.reply(p, msg.ReplyCtx, fmt.Sprintf(e.i18n.T(MsgError), err))
+			return
+		}
+		slog.Info("token: user token cleared", "user_id", msg.UserID)
+		e.reply(p, msg.ReplyCtx, e.i18n.T(MsgTokenCleared))
+
+	case "status":
+		if e.tokenManager.HasToken(msg.UserID) {
+			e.reply(p, msg.ReplyCtx, e.i18n.T(MsgTokenStatus))
+		} else {
+			e.reply(p, msg.ReplyCtx, e.i18n.T(MsgTokenStatusNone))
+		}
+
+	default:
+		e.reply(p, msg.ReplyCtx, e.i18n.T(MsgTokenUsage))
+	}
 }
 
 // ── /doctor command ─────────────────────────────────────────

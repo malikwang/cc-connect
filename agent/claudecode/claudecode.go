@@ -230,8 +230,7 @@ func (a *Agent) StartSession(ctx context.Context, sessionID string) (core.AgentS
 	tools := make([]string, len(a.allowedTools))
 	copy(tools, a.allowedTools)
 	model := a.model
-	extraEnv := a.providerEnvLocked()
-	extraEnv = append(extraEnv, a.sessionEnv...)
+	extraEnv := core.MergeEnv(a.providerEnvLocked(), a.sessionEnv)
 
 	// Add Claude Code Router environment variables if configured
 	if a.routerURL != "" {

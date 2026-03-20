@@ -498,6 +498,15 @@ const (
 	MsgWsCloneSuccess    MsgKey = "ws_clone_success"
 	MsgWsCloneFailed     MsgKey = "ws_clone_failed"
 
+	// Per-user token management
+	MsgTokenSet        MsgKey = "token_set"
+	MsgTokenCleared    MsgKey = "token_cleared"
+	MsgTokenStatus     MsgKey = "token_status"
+	MsgTokenStatusNone MsgKey = "token_status_none"
+	MsgTokenUsage      MsgKey = "token_usage"
+	MsgTokenSetInDM    MsgKey = "token_set_in_dm"
+	MsgTokenDeleteHint MsgKey = "token_delete_hint"
+
 	// Upload server messages
 	MsgUploadFileTooLarge MsgKey = "upload_file_too_large"
 	MsgUploadLinkSent     MsgKey = "upload_link_sent"
@@ -3335,6 +3344,55 @@ var messages = map[MsgKey]map[Language]string{
 		LangTraditionalChinese: "📤 透過瀏覽器上傳檔案：\n🔗 [點擊此處上傳](%s)\n（連結 30 分鐘內有效，僅可使用一次）",
 		LangJapanese:           "📤 ブラウザからファイルをアップロード：\n🔗 [こちらからアップロード](%s)\n（リンクは30分間有効、1回限り）",
 		LangSpanish:            "📤 Sube un archivo desde el navegador:\n🔗 [Haz clic aquí para subir](%s)\n(El enlace expira en 30 minutos, un solo uso)",
+	},
+	MsgTokenSet: {
+		LangEnglish:            "✅ Your API token has been saved. New sessions will use your personal token.",
+		LangChinese:            "✅ 你的 API Token 已保存，新会话将使用你的个人 Token。",
+		LangTraditionalChinese: "✅ 你的 API Token 已儲存，新會話將使用你的個人 Token。",
+		LangJapanese:           "✅ API トークンが保存されました。新しいセッションでは個人トークンが使用されます。",
+		LangSpanish:            "✅ Tu token API ha sido guardado. Las nuevas sesiones usarán tu token personal.",
+	},
+	MsgTokenCleared: {
+		LangEnglish:            "✅ Your API token has been cleared. New sessions will use the project default.",
+		LangChinese:            "✅ 你的 API Token 已清除，新会话将使用项目默认 Token。",
+		LangTraditionalChinese: "✅ 你的 API Token 已清除，新會話將使用專案預設 Token。",
+		LangJapanese:           "✅ API トークンがクリアされました。新しいセッションではプロジェクトのデフォルトが使用されます。",
+		LangSpanish:            "✅ Tu token API ha sido eliminado. Las nuevas sesiones usarán el token del proyecto.",
+	},
+	MsgTokenStatus: {
+		LangEnglish:            "🔑 You have a personal API token set. New sessions use your token.",
+		LangChinese:            "🔑 你已设置个人 API Token，新会话使用你的 Token。",
+		LangTraditionalChinese: "🔑 你已設定個人 API Token，新會話使用你的 Token。",
+		LangJapanese:           "🔑 個人 API トークンが設定されています。新しいセッションであなたのトークンが使用されます。",
+		LangSpanish:            "🔑 Tienes un token API personal configurado. Las nuevas sesiones usan tu token.",
+	},
+	MsgTokenStatusNone: {
+		LangEnglish:            "ℹ️ No personal API token set. Sessions use the project default.",
+		LangChinese:            "ℹ️ 未设置个人 API Token，会话使用项目默认 Token。",
+		LangTraditionalChinese: "ℹ️ 未設定個人 API Token，會話使用專案預設 Token。",
+		LangJapanese:           "ℹ️ 個人 API トークンは未設定です。セッションではプロジェクトのデフォルトが使用されます。",
+		LangSpanish:            "ℹ️ No tienes un token API personal. Las sesiones usan el token del proyecto.",
+	},
+	MsgTokenUsage: {
+		LangEnglish:            "Usage: /token set <key> | /token clear | /token status",
+		LangChinese:            "用法：/token set <key> | /token clear | /token status",
+		LangTraditionalChinese: "用法：/token set <key> | /token clear | /token status",
+		LangJapanese:           "使い方：/token set <key> | /token clear | /token status",
+		LangSpanish:            "Uso: /token set <key> | /token clear | /token status",
+	},
+	MsgTokenSetInDM: {
+		LangEnglish:            "⚠️ Please send /token set <key> in a direct message to the bot for security.",
+		LangChinese:            "⚠️ 为安全起见，请在与机器人的私聊中发送 /token set <key>。",
+		LangTraditionalChinese: "⚠️ 為安全起見，請在與機器人的私聊中發送 /token set <key>。",
+		LangJapanese:           "⚠️ セキュリティのため、ボットへのダイレクトメッセージで /token set <key> を送信してください。",
+		LangSpanish:            "⚠️ Por seguridad, envía /token set <key> en un mensaje directo al bot.",
+	},
+	MsgTokenDeleteHint: {
+		LangEnglish:            "\n⚠️ Please delete the message containing your token from the chat for security.",
+		LangChinese:            "\n⚠️ 为安全起见，请删除聊天中包含你 Token 的消息。",
+		LangTraditionalChinese: "\n⚠️ 為安全起見，請刪除聊天中包含你 Token 的訊息。",
+		LangJapanese:           "\n⚠️ セキュリティのため、トークンを含むメッセージをチャットから削除してください。",
+		LangSpanish:            "\n⚠️ Por seguridad, elimina el mensaje que contiene tu token del chat.",
 	},
 }
 

@@ -145,8 +145,9 @@ type Message struct {
 	Images     []ImageAttachment // attached images (if any)
 	Files      []FileAttachment  // attached files (if any)
 	Audio      *AudioAttachment  // voice message (if any)
-	ReplyCtx   any               // platform-specific context needed for replying
-	FromVoice  bool              // true if message originated from voice transcription
+	ReplyCtx        any               // platform-specific context needed for replying
+	FromVoice       bool              // true if message originated from voice transcription
+	IsDirectMessage bool              // true if message is a 1:1 direct/private message (not group)
 }
 
 // EventType distinguishes different kinds of agent output.

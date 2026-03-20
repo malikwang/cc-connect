@@ -612,6 +612,7 @@ func (p *Platform) onMessage(event *larkim.P2MessageReceiveV1) error {
 	if msg.ChatType != nil {
 		chatType = *msg.ChatType
 	}
+	isDM := chatType == "p2p"
 	mentionCount := len(msg.Mentions)
 	slog.Info(p.tag()+": inbound message",
 		"message_id", messageID,
@@ -681,8 +682,9 @@ func (p *Platform) onMessage(event *larkim.P2MessageReceiveV1) error {
 			MessageID: messageID,
 			UserID:    userID, UserName: userName, ChatName: chatName,
 			Content: quotedPrefix + text, Images: quotedImages,
-			Files:   quotedFiles,
-			ReplyCtx: rctx,
+			Files:           quotedFiles,
+			IsDirectMessage: isDM,
+			ReplyCtx:        rctx,
 		})
 
 	case "image":
@@ -704,8 +706,9 @@ func (p *Platform) onMessage(event *larkim.P2MessageReceiveV1) error {
 			MessageID: messageID,
 			UserID:    userID, UserName: userName, ChatName: chatName,
 			Content: quotedPrefix, Images: images,
-			Files:   quotedFiles,
-			ReplyCtx: rctx,
+			Files:           quotedFiles,
+			IsDirectMessage: isDM,
+			ReplyCtx:        rctx,
 		})
 
 	case "audio":
@@ -733,7 +736,8 @@ func (p *Platform) onMessage(event *larkim.P2MessageReceiveV1) error {
 				Format:   "ogg",
 				Duration: audioBody.Duration / 1000,
 			},
-			ReplyCtx: rctx,
+			IsDirectMessage: isDM,
+			ReplyCtx:        rctx,
 		})
 
 	case "post":
@@ -748,8 +752,9 @@ func (p *Platform) onMessage(event *larkim.P2MessageReceiveV1) error {
 			MessageID: messageID,
 			UserID:    userID, UserName: userName, ChatName: chatName,
 			Content: quotedPrefix + text, Images: images,
-			Files:   quotedFiles,
-			ReplyCtx: rctx,
+			Files:           quotedFiles,
+			IsDirectMessage: isDM,
+			ReplyCtx:        rctx,
 		})
 
 	case "interactive":
@@ -763,8 +768,9 @@ func (p *Platform) onMessage(event *larkim.P2MessageReceiveV1) error {
 			MessageID: messageID,
 			UserID:    userID, UserName: userName, ChatName: chatName,
 			Content: quotedPrefix + text, Images: quotedImages,
-			Files:   quotedFiles,
-			ReplyCtx: rctx,
+			Files:           quotedFiles,
+			IsDirectMessage: isDM,
+			ReplyCtx:        rctx,
 		})
 
 	case "file":
@@ -805,8 +811,9 @@ func (p *Platform) onMessage(event *larkim.P2MessageReceiveV1) error {
 			MessageID: messageID,
 			UserID:    userID, UserName: userName, ChatName: chatName,
 			Content: quotedPrefix, Images: quotedImages,
-			Files:   files,
-			ReplyCtx: rctx,
+			Files:           files,
+			IsDirectMessage: isDM,
+			ReplyCtx:        rctx,
 		})
 
 	case "merge_forward":
@@ -819,10 +826,11 @@ func (p *Platform) onMessage(event *larkim.P2MessageReceiveV1) error {
 			SessionKey: sessionKey, Platform: p.platformName,
 			MessageID: messageID,
 			UserID:    userID, UserName: userName, ChatName: chatName,
-			Content:  text,
-			Images:   images,
-			Files:    files,
-			ReplyCtx: rctx,
+			Content:         text,
+			Images:          images,
+			Files:           files,
+			IsDirectMessage: isDM,
+			ReplyCtx:        rctx,
 		}
 		p.handler(p.dispatchPlatform(), coreMsg)
 
@@ -2493,12 +2501,13 @@ func (p *Platform) onBotMenu(event *larkapplication.P2BotMenuV6) error {
 	sessionKey := p.platformName + ":" + userID + ":" + userID
 
 	p.handler(p.dispatchPlatform(), &core.Message{
-		SessionKey: sessionKey,
-		Platform:   p.platformName,
-		Content:    content,
-		UserID:     userID,
-		UserName:   userName,
-		ReplyCtx:   replyContext{chatID: userID, sessionKey: sessionKey},
+		SessionKey:      sessionKey,
+		Platform:        p.platformName,
+		Content:         content,
+		UserID:          userID,
+		UserName:        userName,
+		IsDirectMessage: true,
+		ReplyCtx:        replyContext{chatID: userID, sessionKey: sessionKey},
 	})
 	return nil
 }
